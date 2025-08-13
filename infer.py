@@ -10,7 +10,7 @@ def load_2B(pretrain_root, model_path):
     vae_path=f'{pretrain_root}/infinity/infinity_vae_d32reg.pth'
     text_encoder_ckpt=f'{pretrain_root}/flan-t5-xl'
     args=argparse.Namespace(
-        pn='0.06M',
+        pn='0.25M',
         model_path=model_path,
         cfg_insertion_layer=0,
         vae_type=32,
@@ -41,7 +41,7 @@ def load_2B(pretrain_root, model_path):
     # load infinity
     infinity = load_transformer(vae, args)
 
-    return infinity, vae, text_tokenizer, text_encoder
+    return args, infinity, vae, text_tokenizer, text_encoder
 
 
 def load_8B(pretrain_root, model_path):
@@ -66,9 +66,10 @@ def load_8B(pretrain_root, model_path):
         h_div_w_template=1.000,
         use_flex_attn=0,
         cache_dir='/dev/shm',
-        checkpoint_type='torch_shard',
+        checkpoint_type='torch',
         seed=0,
         bf16=1,
+        enable_model_cache=0,
     )
 
     # load text encoder
@@ -78,7 +79,7 @@ def load_8B(pretrain_root, model_path):
     # load infinity
     infinity = load_transformer(vae, args)
 
-    return infinity, vae, text_tokenizer, text_encoder
+    return args, infinity, vae, text_tokenizer, text_encoder
 
 
 def load(pretrain_root, model_path, model_size='2B'):
@@ -90,13 +91,13 @@ def load(pretrain_root, model_path, model_size='2B'):
         raise ValueError(f"Unsupported model size: {model_size}")
     
 
-def infer(src_img_path, tgt_img_path, instruction):
-    from infinity.dataset.dataset_t2i_iterable import transform
-    h, w = 256, 256
-    if args.pn == '0.25M':
-        h, w = 512, 512
-    elif args.pn == '1M':
-        h, w = 1024, 1024
+def infer(args, src_img_path, tgt_img_path, instruction):
+    from infinity.dataset.webdataset import transform
+    
+    h, w = 512, 512
+    if args.pn == '0.06M':
+        h, w = 256, 256
+
     with open(src_img_path, 'rb') as f:
         src_img: PImage.Image = PImage.open(f)
         src_img = src_img.convert('RGB')
@@ -138,9 +139,10 @@ def infer(src_img_path, tgt_img_path, instruction):
 if __name__ == "__main__":
     pretrain_root = "PRETRAIN_ROOT"
     model_path = "MODEL_PATH"
+    model_size = "MODEL_SIZE"  # "2B" or "8B"
     src_img_path = "SOURCE_IMG_PATH"
     tgt_img_path = "TARGET_IMG_PATH"
     instruction = "INSTRUCTION"
 
-    infinity, vae, text_tokenizer, text_encoder = load(pretrain_root, model_path, model_size='8B')
-    infer(src_img_path, tgt_img_path, instruction)
+    args, infinity, vae, text_tokenizer, text_encoder = load(pretrain_root, model_path, model_size)
+    infer(args, src_img_path, tgt_img_path, instruction)
