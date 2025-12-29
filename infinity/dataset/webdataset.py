@@ -55,9 +55,9 @@ def WDSEditDataset(
     urls = []
     overall_length = 0
 
-    with open(f"{data_path}/SEEDEdit.txt", "r") as file:
+    with open(f"{data_path}/FaceID.txt", "r") as file:
         info_file = file.readlines()
-    urls_base = "SEED_EDIT_DATA_SHARD_BASE"
+    urls_base = f"{data_path}/<FILE>"
     data_file = []
     for item in info_file:
         file_name, length, shard_num = item.strip('\n').split('\t')
@@ -67,17 +67,17 @@ def WDSEditDataset(
         overall_length += length
     urls += [urls_base.replace("<FILE>", file) for file in data_file]
 
-    with open(f"{data_path}/ImgEdit.txt", "r") as file:
-        info_file = file.readlines()
-    urls_base = "IMG_EDIT_DATA_SHARD_BASE"
-    data_file = []
-    for item in info_file:
-        file_name, length, shard_num = item.strip('\n').split('\t')
-        length, shard_num = int(length), int(shard_num)
-        for shard in range(shard_num):
-            data_file.append(f"wds_{file_name}_{shard:=04d}.tar")
-        overall_length += length
-    urls += [urls_base.replace("<FILE>", file) for file in data_file]
+    # with open(f"{data_path}/MultiID.txt", "r") as file:
+    #     info_file = file.readlines()
+    # urls_base = "MULTIID_DATA_SHARD_BASE"
+    # data_file = []
+    # for item in info_file:
+    #     file_name, length, shard_num = item.strip('\n').split('\t')
+    #     length, shard_num = int(length), int(shard_num)
+    #     for shard in range(shard_num):
+    #         data_file.append(f"wds_{file_name}_{shard:=04d}.tar")   # 将 shard 变量格式化为 4 位数字，不足 4 位时用零填充。 1 --> 0001  123 --> 0123 12345 --> 12345（超过4位不变）
+    #     overall_length += length
+    # urls += [urls_base.replace("<FILE>", file) for file in data_file]
 
     global PN
     PN = pn

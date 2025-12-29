@@ -81,8 +81,22 @@ class CKPTSaver(object):
             #     'acc_str':      self.acc_str,
             #     'milestones':   self.eval_milestone,
             # }, local_out_ckpt)
-            torch.save(trainer_state["gpt_fsdp"], local_out_ckpt)
+            # torch.save(trainer_state["gpt_fsdp"], local_out_ckpt) # 将模型参数、梯度和优化器状态切分（Shard）到所有数据并行进程（GPU）上，而不是像 DDP 那样在每个 GPU 上复制完整的模型。
+
+            # Save full checkpoint including args, epoch, iter, and trainer state
+            # trainer_state contains the model weights (gathered if FSDP) and optimizer state
+            checkpoint = {
+                'args':         args.state_dict(),
+                'epoch':        next_ep,
+                'iter':         next_it,
+                'trainer':      trainer_state,
+                'acc_str':      self.acc_str,
+                'milestones':   self.eval_milestone,
+            }
+            if hasattr(args, 'gpt_training'):
+                checkpoint['gpt_training'] = args.gpt_training
             
+            torch.save(checkpoint, local_out_ckpt)
 
             # if g_it not in [1000, 5000]:
             #     cmd = f"aws s3 cp {local_out_ckpt} s3://hidream-user-maoqingyang/infinity/"

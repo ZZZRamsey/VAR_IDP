@@ -434,7 +434,8 @@ class Infinity(nn.Module):
                 assert x_BLC.shape[-1] % 128 == 0, 'x_BLC.shape[-1] % 128 != 0'
                 attn_bias_or_two_vector = None
             else:
-                d: torch.Tensor = torch.cat([torch.full((pn[0]*pn[1]*pn[2],), i) for i, pn in enumerate(scale_schedule)]).view(1, l_end, 1)
+                edit_scale_schedule = [scale_schedule[-1]] + scale_schedule
+                d: torch.Tensor = torch.cat([torch.full((pn[0]*pn[1]*pn[2],), i) for i, pn in enumerate(edit_scale_schedule)]).view(1, l_end, 1)
                 dT = d.transpose(1, 2)    # dT: 11L
                 attn_bias_for_masking = torch.where(d >= dT, 0., -torch.inf).reshape(1, 1, l_end, l_end)
                 attn_bias = attn_bias_for_masking[:, :, :l_end, :l_end].contiguous()   # attn_bias: 11LL
@@ -579,7 +580,7 @@ class Infinity(nn.Module):
             if not self.add_lvl_embeding_only_first_block:
                 src_last_stage = self.add_lvl_embeding(src_last_stage, num_stages_minus_1, scale_schedule)
             start_layer = True if block_idx == 0 else False
-            for m in b.module:
+            for m in b.module:  # 将参考图的 Embedding (src_last_stage) 完整地通过了一遍所有的 Transformer 层。
                 src_last_stage = m(x=src_last_stage, cond_BD=cond_BD_or_gss, ca_kv=ca_kv, attn_bias_or_two_vector=None, attn_fn=attn_fn, scale_schedule=scale_schedule, rope2d_freqs_grid=self.rope2d_freqs_grid, start_layer=start_layer, scale_ind=num_stages_minus_1)
                 start_layer = False
         

@@ -5,6 +5,7 @@ import random
 import subprocess
 import sys
 import time
+import datetime
 from collections import OrderedDict, deque
 from typing import Optional, Union
 
@@ -16,7 +17,7 @@ import infinity.utils.dist as dist
 
 
 class Args(Tap):
-    local_out_path: str = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'local_output')  # directory for save checkpoints
+    local_out_path: str = os.path.join(os.getcwd(), 'local_output')  # directory for save checkpoints
     data_path: str = ''                 # dataset
     bed: str = ''                       # bed directory for copy checkpoints apart from local_out_path
     vae_ckpt: str = ''                  # VAE ckpt
@@ -40,6 +41,7 @@ class Args(Tap):
     checkpoint_type: str = 'torch'      # checkpoint_type: torch, onmistore
     seed: int = None                    # 3407
     rand: bool = True                   # actual seed = seed + (dist.get_rank()*512 if rand else 0)
+    vis = False                     # whether to visualize during training
     device: str = 'cpu'
     task_id: str = '2493513'
     trial_id: str = '7260554'
@@ -50,7 +52,7 @@ class Args(Tap):
     is_master_node: bool = None
     # dir
     log_txt_path: str = ''
-    t5_path: str = ''                   # if not specified: automatically find from all bytenas
+    t5_path: str = '/data1/zls/pretrain/google/flan-t5-xl/'                   # if not specified: automatically find from all bytenas
     online_t5: bool = True              # whether to use online t5 or load local features
     # GPT
     sdpa_mem: bool = True               # whether to use with torch.backends.cuda.sdp_kernel(enable_flash=False, enable_math=False, enable_mem_efficient=True)
@@ -138,13 +140,13 @@ class Args(Tap):
     bitloss_type: str = 'mean'          # mean or sum
     dynamic_resolution_across_gpus: int = 1 # allow dynamic resolution across gpus
     enable_dynamic_length_prompt: int = 0 # enable dynamic length prompt during training
-    use_streaming_dataset: int = 0      # use streaming dataset
+    use_streaming_dataset: int = 1      # use streaming dataset
     iterable_data_buffersize: int = 90000 # streaming dataset buffer size
     save_model_iters_freq: int = 1000   # save model iter freq
     noise_apply_layers: int = -1        # Bitwise Self-Correction: apply noise to layers, -1 means not apply noise
     noise_apply_strength: float = -1    # Bitwise Self-Correction: apply noise strength, -1 means not apply noise
     noise_apply_requant: int = 1        # Bitwise Self-Correction: requant after apply noise
-    rope2d_each_sa_layer: int = 0       # apply rope2d to each self-attention layer
+    rope2d_each_sa_layer: int = 1       # apply rope2d to each self-attention layer
     rope2d_normalized_by_hw: int = 1    # apply normalized rope2d
     use_fsdp_model_ema: int = 0         # use fsdp model ema
     add_lvl_embeding_only_first_block: int = 1 # apply lvl pe embedding only first block or each block
@@ -369,13 +371,36 @@ def init_dist_and_get_args():
     if args.dbg:
         torch.autograd.set_detect_anomaly(True)
     
+    # TODO: multi node trianing timestamped output dir
+    # if dist.is_local_master():
+    #     timestamp = datetime.datetime.now().strftime('run-%Y%m%d_%H%M%S-%f')[:24]
+    #     args.local_out_path = os.path.join(args.local_out_path, timestamp)
+
     try: os.makedirs(args.bed, exist_ok=True)
-    except: pass
-    try: os.makedirs(args.local_out_path, exist_ok=True)
     except: pass
     
     day3 = 60*24*3
-    dist.init_distributed_mode(local_out_path=args.local_out_path, fork=False, timeout_minutes=day3 if int(os.environ.get('LONG_DBG', '0') or '0') > 0 else 30)
+    dist.init_distributed_mode(local_out_path=None, fork=False, timeout_minutes=day3 if int(os.environ.get('LONG_DBG', '0') or '0') > 0 else 30)
+
+    # Now dist is initialized. Update local_out_path with timestamp
+    if dist.is_master():
+        timestamp = datetime.datetime.now().strftime('run-%Y%m%d_%H%M%S')
+        # We need to send this string to other processes.
+        # Broadcasting strings is not directly supported by torch.distributed.broadcast
+        # We can convert to tensor or use a list of objects.
+        timestamp_list = [timestamp]
+    else:
+        timestamp_list = [None]
+    
+    if dist.initialized():
+        torch.distributed.broadcast_object_list(timestamp_list, src=0)
+    
+    timestamp = timestamp_list[0]
+    args.local_out_path = os.path.join(args.local_out_path, timestamp)
+    
+    if dist.is_local_master():
+        try: os.makedirs(args.local_out_path, exist_ok=True)
+        except: pass
     
     args.tlen = max(args.tlen, args.nodata_tlen)
     if args.zero and args.tema != 0:

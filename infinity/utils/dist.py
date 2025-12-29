@@ -88,11 +88,11 @@ def set_gpu_id(gpu_id: int):
     else:
         raise NotImplementedError
 
-
+# is global master process
 def is_master():
     return __rank == 0
 
-
+# is local master process (each machine has one)
 def is_local_master():
     return __local_rank == 0
 
@@ -253,7 +253,7 @@ def init_distributed_mode(local_out_path, fork=False, only_sync_master=False, ti
         print(f'{"!"*80}   dist init error (NCCL Error?), stopping training!   {"!"*80}', flush=True)
         raise e
     
-    if local_out_path is not None: os.makedirs(local_out_path, exist_ok=True)
+    # if local_out_path is not None: os.makedirs(local_out_path, exist_ok=True)
     _change_builtin_print(is_local_master())
     # if (is_master() if only_sync_master else is_local_master()) and local_out_path is not None and len(local_out_path):
     #     sys.stdout, sys.stderr = BackupStreamToFile(local_out_path, for_stdout=True), BackupStreamToFile(local_out_path, for_stdout=False)

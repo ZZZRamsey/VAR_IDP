@@ -142,7 +142,7 @@ def gen_one_img(
 
     src_img_prefix = get_image_prefix(src_img_features, vae, scale_schedule, apply_spatial_patchify)
 
-    with torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16, cache_enabled=True):
+    with torch.amp.autocast('cuda', enabled=True, dtype=torch.bfloat16, cache_enabled=True):
         stt = time.time()
         _, pred_gt, img_list = infinity_test.autoregressive_infer_cfg(
             vae=vae,
@@ -206,12 +206,13 @@ def load_infinity(
     text_channels=2048,
     apply_spatial_patchify=0,
     use_flex_attn=False,
-    bf16=False,
+    # bf16=False,
+    bf16=True,
     checkpoint_type='torch',
 ):
     print(f'[Loading Infinity]')
     text_maxlen = 512
-    with torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16, cache_enabled=True), torch.no_grad():
+    with torch.amp.autocast('cuda', enabled=True, dtype=torch.bfloat16, cache_enabled=True), torch.no_grad():
         infinity_test: Infinity = Infinity(
             vae_local=vae, text_channels=text_channels, text_maxlen=text_maxlen,
             shared_aln=True, raw_scale_schedule=scale_schedule,
@@ -229,13 +230,13 @@ def load_infinity(
             inference_mode=True,
             train_h_div_w_list=[1.0],
             **model_kwargs,
-        ).to(device=device)
+        )
         print(f'[you selected Infinity with {model_kwargs=}] model size: {sum(p.numel() for p in infinity_test.parameters())/1e9:.2f}B, bf16={bf16}')
 
         if bf16:
             for block in infinity_test.unregistered_blocks:
                 block.bfloat16()
-
+        infinity_test.to(device=device) # 先在cpu上转换精度，再to到GPU上，节省显存
         infinity_test.eval()
         infinity_test.requires_grad_(False)
 
@@ -244,7 +245,9 @@ def load_infinity(
 
         print(f'[Load Infinity weights]')
         if checkpoint_type == 'torch':
-            state_dict = torch.load(model_path, map_location=device)
+            state_dict = torch.load(model_path, map_location='cpu')
+            if bf16:
+                state_dict = {k: v.to(torch.bfloat16) if v.dtype.is_floating_point else v for k, v in state_dict.items()}
             print(infinity_test.load_state_dict(state_dict))
         elif checkpoint_type == 'torch_shard':
             from transformers.modeling_utils import load_sharded_checkpoint
@@ -292,6 +295,7 @@ def joint_vi_vae_encode_decode(vae, image_path, scale_schedule, device, tgt_h, t
 def load_visual_tokenizer(args):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # load vae
+    print(f'[Load Infinity VAE]')
     if args.vae_type in [14,16,18,20,24,32,64]:
         from infinity.models.bsq_vae.vae import vae_model
         schedule_mode = "dynamic"
@@ -306,7 +310,7 @@ def load_visual_tokenizer(args):
             encoder_ch_mult=[1, 2, 4, 4, 4]
             decoder_ch_mult=[1, 2, 4, 4, 4]
         vae = vae_model(args.vae_path, schedule_mode, codebook_dim, codebook_size, patch_size=patch_size, 
-                        encoder_ch_mult=encoder_ch_mult, decoder_ch_mult=decoder_ch_mult, test_mode=True).to(device)
+                        encoder_ch_mult=encoder_ch_mult, decoder_ch_mult=decoder_ch_mult, test_mode=True).bfloat16().to(device)
     else:
         raise ValueError(f'vae_type={args.vae_type} not supported')
     return vae

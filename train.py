@@ -278,7 +278,7 @@ def build_dataloaders(args):
     vbs = round(args.batch_size * 1.5)
     print(f"{args.batch_size=}, {vbs=}", flush=True)
     ld_val = math.ceil(50000 / vbs)
-    ld_train = wds.WebLoader(dataset=dataset_train, num_workers=args.workers, pin_memory=True, generator=args.get_different_generator_for_each_rank(), batch_size=None, prefetch_factor=args.prefetch_factor)
+    ld_train = wds.WebLoader(dataset=dataset_train, num_workers=args.workers, pin_memory=True, generator=args.get_different_generator_for_each_rank(), batch_size=None, prefetch_factor=args.prefetch_factor if args.workers > 0 else None)
     iters_train = len(dataset_train) // args.glb_batch_size
     print(f'len(dataset): {len(dataset_train)}')
     print(f'[dataloader] gbs={args.glb_batch_size}, lbs={args.batch_size}, iters_train={iters_train}, type(train_set)={type_train_set}')
@@ -329,7 +329,7 @@ def main_train(args: arg_util.Args):
             PARA_OT += p.numel()
     PARA_ALL = PARA_EMB + PARA_ALN + PARA_OT
     
-    trainer.gpt_opt.log_param(ep=-1)
+    # trainer.gpt_opt.log_param(ep=-1)
     time.sleep(3), gc.collect(), torch.cuda.empty_cache(), time.sleep(3)
     ep_lg = max(1, args.ep // 10) if args.ep <= 100 else max(1, args.ep // 20)
     
@@ -384,6 +384,12 @@ def main_train(args: arg_util.Args):
         
         AR_ep_loss = {}
         is_val_and_also_saving = (ep + 1) % max(1, args.ep // 25) == 0 or (ep + 1) == args.ep
+        # Lm: Loss mean（平均损失）
+        # Lt: Loss tail（尾部损失，通常指序列末尾或特定部分的损失）
+        # Am: Accuracy mean（平均准确率）
+        # At: Accuracy tail（尾部准确率）
+        # last_: 当前 epoch 的值
+        # best_: 历史最佳值
         if (ep + 1) < 10:
             law_stats = {
                 'last_Lm': L_mean, 'best_Lm': min_L_mean, 'last_Am': acc_mean, 'best_Am': max_acc_mean,
@@ -391,7 +397,7 @@ def main_train(args: arg_util.Args):
                 'pe': PARA_EMB, 'paln': PARA_ALN, 'pot': PARA_OT, 'pall': PARA_ALL,
             }
         elif is_val_and_also_saving:
-            if ld_val is None or isinstance(ld_val, int):    # args.nodata or args.nova
+            if ld_val is None or isinstance(ld_val, int):    # args.nodata or args.nova 没有验证集，赋值为假数据
                 last_val_loss_mean, last_val_loss_tail, last_val_acc_mean, last_val_acc_tail, tot, cost = 0.666, 0.555, 5.55, 6.66, 50000, 0.001
             else:
                 last_val_loss_mean, last_val_loss_tail, last_val_acc_mean, last_val_acc_tail, tot, cost = trainer.eval_ep(ep, args, ld_val)
@@ -433,7 +439,8 @@ def main_train(args: arg_util.Args):
     print(f'  [*] [PT finished]  Total Time: {total_time},   Lm: {min_L_mean:.3f} ({L_mean}),   Lt: {min_L_tail:.3f} ({L_tail})')
     print('\n\n')
     
-    del stats, iters_train, ld_train, visualizer
+    # del stats, iters_train, ld_train, visualizer
+    del stats, iters_train, ld_train
     time.sleep(3), gc.collect(), torch.cuda.empty_cache(), time.sleep(3)
     return
 
@@ -462,11 +469,12 @@ def train_one_ep(
         
         last_t_perf = time.time()
         speed_ls: deque = g_speed_ls
-        FREQ = min(args.prof_freq, iters_train//2-1)
+        FREQ = min(args.prof_freq, iters_train//2-1)    # 每隔多少个 Iteration（迭代步数）进行一次性能统计（计算训练速度 iter/s）。
+        if FREQ <= 0: FREQ = 1
         NVIDIA_IT_PLUS_1 = set(FREQ*i for i in (1, 2, 3, 4, 6, 8))
         ranges = set([2 ** i for i in range(20)])
         if ep <= 1: ranges |= {1, 2, 3, 4, 6, 8, 10, 12, 16, 20, 24, 32, 40}
-        PRINTABLE_IT_PLUS_1 = set(FREQ*i for i in ranges)
+        PRINTABLE_IT_PLUS_1 = set(FREQ*i for i in ranges)   # 决定哪些 step 需要打印详细日志。
 
         me = misc.MetricLogger()
         [me.add_meter(x, misc.SmoothedValue(window_size=1, fmt='{value:.2g}')) for x in ['tlr']]

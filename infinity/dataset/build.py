@@ -126,7 +126,21 @@ def build_t2i_dataset(
     short_prob=0.2,
     load_vae_instead_of_image=False
 ):
-    if args.use_streaming_dataset:
+    if args.use_streaming_dataset:   
+        return WDSEditDataset(
+            data_path, 
+            buffersize=args.iterable_data_buffersize,
+            pn=args.pn,
+            batch_size=args.batch_size,
+            # num_replicas=tdist.get_world_size(), # 1,
+            # rank=tdist.get_rank(), # 0
+            # dataloader_workers=args.workers,
+            # dynamic_resolution_across_gpus=args.dynamic_resolution_across_gpus,
+            # enable_dynamic_length_prompt=args.enable_dynamic_length_prompt,
+            # seed=args.seed if args.seed is not None else int(time.time()),
+        )
+    else:
+        raise ValueError(f'args.use_streaming_dataset={args.use_streaming_dataset} unsupported')
         # return T2IIterableDataset(
         #     data_path, 
         #     max_caption_len=max_caption_len, 
@@ -142,21 +156,7 @@ def build_t2i_dataset(
         #     dynamic_resolution_across_gpus=args.dynamic_resolution_across_gpus,
         #     enable_dynamic_length_prompt=args.enable_dynamic_length_prompt,
         #     seed=args.seed if args.seed is not None else int(time.time()),
-        # )        
-        return WDSEditDataset(
-            data_path, 
-            buffersize=args.iterable_data_buffersize,
-            pn=args.pn,
-            batch_size=args.batch_size,
-            num_replicas=tdist.get_world_size(), # 1,
-            rank=tdist.get_rank(), # 0
-            # dataloader_workers=args.workers,
-            # dynamic_resolution_across_gpus=args.dynamic_resolution_across_gpus,
-            # enable_dynamic_length_prompt=args.enable_dynamic_length_prompt,
-            # seed=args.seed if args.seed is not None else int(time.time()),
-        )
-    else:
-        raise ValueError(f'args.use_streaming_dataset={args.use_streaming_dataset} unsupported')
+        # )     
 
 
 def pil_load(path: str, proposal_size):
