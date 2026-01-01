@@ -50,9 +50,10 @@ class Args(Tap):
     real_trial_id: str = '7260552'
     chunk_nodes: int = None
     is_master_node: bool = None
+    wandb_offline: bool = False
     # dir
     log_txt_path: str = ''
-    t5_path: str = '/data1/zls/pretrain/google/flan-t5-xl/'                   # if not specified: automatically find from all bytenas
+    t5_path: str = ''                   # if not specified: automatically find from all bytenas
     online_t5: bool = True              # whether to use online t5 or load local features
     # GPT
     sdpa_mem: bool = True               # whether to use with torch.backends.cuda.sdp_kernel(enable_flash=False, enable_math=False, enable_mem_efficient=True)

@@ -5,6 +5,7 @@ HiDream-ai/
 .idea/*
 llava/
 _vis_cached/
+vis/*
 _vqgan/
 _vae/
 _vae*/
@@ -19,6 +20,7 @@ stable-diffusion-v1-4/
 *.pth
 *.pth.tar
 *.ckpt
+*.onnx
 *.log
 *.txt
 *.ipynb
@@ -32,7 +34,7 @@ wandb
 *.csv
 *.tar.gz
 *.bin
-data/
+data/*
 tmp
 output
 *.tsv
@@ -47,3 +49,5 @@ ref.py
 wandb
 .DS_Store
 clean*
+!**/.gitkeep
+!.gitignore

@@ -8,7 +8,7 @@ from typing import Optional
 import time
 
 import pytz
-from infinity.dataset.webdataset import WDSEditDataset
+from infinity.dataset.dataset_wds import WDS_Train_Dataset
 
 try:
     from grp import getgrgid
@@ -127,7 +127,7 @@ def build_t2i_dataset(
     load_vae_instead_of_image=False
 ):
     if args.use_streaming_dataset:   
-        return WDSEditDataset(
+        return WDS_Train_Dataset(
             data_path, 
             buffersize=args.iterable_data_buffersize,
             pn=args.pn,
