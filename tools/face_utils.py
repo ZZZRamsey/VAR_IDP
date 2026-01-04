@@ -174,6 +174,9 @@ def extract_moref(img, json_data, face_size_restriction=100):
             x2 = min(img_width, x2)
             y2 = min(img_height, y2)
             
+            # Add modified bbox
+            modified_bbox = [x1, y1, x2, y2]
+            
             # Extract face region
             face_region = img.crop((x1, y1, x2, y2))
             
@@ -182,7 +185,7 @@ def extract_moref(img, json_data, face_size_restriction=100):
             
             faces.append(face_region)
         # print("len of faces:", len(faces))
-        return faces
+        return faces, modified_bbox
     except Exception as e:
         print(f"Error processing image: {e}")
         return []
@@ -352,9 +355,13 @@ def is_face_at_edge(face_bbox, img_width, img_height, margin=0.1):
             y1 <= margin_pixels or y2 >= img_height - margin_pixels)
 
 class FaceExtractor:
-    def __init__(self):
+    def __init__(self, gpu_id=0):
         self.model = insightface.app.FaceAnalysis(name = "antelopev2", root="./weights")   # ./models/antelopev2/*.onnx
-        self.model.prepare(ctx_id=0, det_thresh=0.4)
+        self.model.prepare(ctx_id=gpu_id, det_thresh=0.4)
+
+    def is_side_face(self, pose, yaw_threshold=35):
+        pitch, yaw, roll = pose
+        return abs(yaw) > yaw_threshold if pose is not None else False
 
     # 逻辑：检测人脸 -> 获取第一个人脸的 bbox -> 调用 extract_moref 抠出 512x512 的人脸图 -> 返回该人脸图和对应的特征向量（embedding）
     def extract(self, image: Image.Image):
@@ -367,7 +374,7 @@ class FaceExtractor:
         bbox = res["bbox"]
         # print("len(bbox)", len(bbox))
 
-        moref = extract_moref(image, {"bboxes": [bbox]}, 1)
+        moref, _ = extract_moref(image, {"bboxes": [bbox]}, 1)
         # print("len(moref)", len(moref))
         return moref[0], res["embedding"]
 
@@ -411,17 +418,26 @@ class FaceExtractor:
         image_np = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
         res = self.model.get(image_np)
         if len(res) == 0:
-            return None, None
+            return None, None, None, None, None, None
         ref_imgs = []
         arcface_embeddings = []
         bboxes = []
+        modified_bbox_list = [] 
+        pose_list = []
+
         for r in res:
+            # side_face = self.is_side_face(r)
+            # if side_face:
+            #     continue
             bbox = r["bbox"]
+            pose = r.get("pose", None)
+            pose_list.append(pose)
             bboxes.append(bbox)
-            moref = extract_moref(image, {"bboxes": [bbox]}, 1)
+            moref, modified_bbox = extract_moref(image, {"bboxes": [bbox]}, 1)
+            modified_bbox_list.append(modified_bbox)
             ref_imgs.append(moref[0])
             arcface_embeddings.append(r["embedding"])
-        return ref_imgs, arcface_embeddings, bboxes
+        return res, ref_imgs, arcface_embeddings, bboxes, modified_bbox_list, pose_list
 
 
 if __name__ == "__main__":
@@ -431,21 +447,37 @@ if __name__ == "__main__":
     def test_face_extractor(path):
         file_name = os.path.basename(path).split(".")[0]
         test_image = Image.open(path).convert("RGB")
-        ref_imgs, embeddings, bboxes = face_extractor.extract_refs(test_image)
-        assert len(ref_imgs) == len(embeddings)
+        _, ref_imgs, embeddings, bboxes, modified_bboxes, pose_list = face_extractor.extract_refs(test_image)
+        if ref_imgs is None:
+            print(f"No faces detected in {path}")
+            return
+        assert len(ref_imgs) == len(embeddings) == len(bboxes) == len(modified_bboxes) == len(pose_list)
         print(f"Extracted {len(ref_imgs)} faces from {path}")
         print("embedding shape:", embeddings[0].shape)
         for i, ref_img in enumerate(ref_imgs):
             ref_img.save(os.path.join(save_dir, f"{file_name}_ref_img_{i}.jpg"))
         # bboxes = face_extractor.locate_bboxes(test_image)
     
-        # 在原图上可视化检测到的人脸
+        # visualize
         test_image_np = np.array(test_image)
-        for bbox in bboxes:
+        # for bbox in bboxes:
+        #     x1, y1, x2, y2 = map(int, bbox)
+        #     cv2.rectangle(test_image_np, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        for bbox in modified_bboxes:
             x1, y1, x2, y2 = map(int, bbox)
-            cv2.rectangle(test_image_np, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.rectangle(test_image_np, (x1, y1), (x2, y2), (255, 0, 0), 2)
+        for i, pose in enumerate(pose_list):
+            print(f"Face {i} pose:", pose)
+            if pose is None:
+                continue
+            print("is_side_face:", face_extractor.is_side_face(pose))
+            if face_extractor.is_side_face(pose):
+                bbox = bboxes[i]
+                x1, y1, x2, y2 = map(int, bbox)
+                cv2.rectangle(test_image_np, (x1, y1), (x2, y2), (0, 0, 255), 2)
         test_image_with_bboxes = Image.fromarray(test_image_np)
         test_image_with_bboxes.save(os.path.join(save_dir, f"{file_name}_with_bboxes.jpg"))
 
-    test_face_extractor("./assets/test_3.jpg")
+    # test_face_extractor("./assets/VCG41N1158298345.jpg")
+    # test_face_extractor("./assets/test_3.jpg")
     test_face_extractor("./assets/demo.jpg")
