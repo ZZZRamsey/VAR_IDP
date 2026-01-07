@@ -439,8 +439,7 @@ class FaceExtractor:
             arcface_embeddings.append(r["embedding"])
         return res, ref_imgs, arcface_embeddings, bboxes, modified_bbox_list, pose_list
 
-
-if __name__ == "__main__":
+def main():
     save_dir = "./vis"
     os.makedirs(save_dir, exist_ok=True)
     face_extractor = FaceExtractor()
@@ -478,6 +477,60 @@ if __name__ == "__main__":
         test_image_with_bboxes = Image.fromarray(test_image_np)
         test_image_with_bboxes.save(os.path.join(save_dir, f"{file_name}_with_bboxes.jpg"))
 
+    def test_resize(image_path="./assets/demo.jpg", target_size=512):
+        """
+            Test the general_face_preserving_resize function.
+        """
+        print(f"Testing general_face_preserving_resize on {image_path}")
+        
+        # Load image
+        if not os.path.exists(image_path):
+            print(f"Image not found: {image_path}")
+            return
+        
+        test_image = Image.open(image_path).convert('RGB')
+        print(f"Original image size: {test_image.size}")
+        
+        # Detect faces
+        _, _, _, bboxes, _, _ = face_extractor.extract_refs(test_image)
+        
+        if not bboxes:
+            print("No faces detected in the image.")
+            return
+        
+        print(f"Detected {len(bboxes)} faces: {bboxes}")
+        
+        # Call general_face_preserving_resize
+        resized_img, new_bboxes = general_face_preserving_resize(test_image, bboxes, target_size)
+        
+        if resized_img is None:
+            print("Failed to resize image while preserving faces.")
+            return
+        
+        print(f"Resized image size: {resized_img.size}")
+        print(f"New bboxes: {new_bboxes}")
+        
+        file_name = os.path.splitext(os.path.basename(image_path))[0]
+        resized_img.save(os.path.join(save_dir, f"{file_name}_resized.jpg"))
+        
+        # Visualize bboxes on resized image
+        resized_np = np.array(resized_img)
+        for bbox in new_bboxes:
+            x1, y1, x2, y2 = map(int, bbox)
+            cv2.rectangle(resized_np, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        
+        resized_with_bboxes = Image.fromarray(resized_np)
+        resized_with_bboxes.save(os.path.join(save_dir, f"{file_name}_resized_with_bboxes.jpg"))
+        
+        print(f"Resized image saved to {os.path.join(save_dir, f'{file_name}_resized.jpg')}")
+        print(f"Resized image with bboxes saved to {os.path.join(save_dir, f'{file_name}_resized_with_bboxes.jpg')}")
+
     # test_face_extractor("./assets/VCG41N1158298345.jpg")
-    # test_face_extractor("./assets/test_3.jpg")
-    test_face_extractor("./assets/demo.jpg")
+
+    test_resize("./assets/VCG211387749073.jpg")
+
+
+if __name__ == "__main__":
+    main()
+
+    

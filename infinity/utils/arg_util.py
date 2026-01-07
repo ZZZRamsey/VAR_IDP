@@ -41,7 +41,7 @@ class Args(Tap):
     checkpoint_type: str = 'torch'      # checkpoint_type: torch, onmistore
     seed: int = None                    # 3407
     rand: bool = True                   # actual seed = seed + (dist.get_rank()*512 if rand else 0)
-    vis = False                     # whether to visualize during training
+    vis: bool = False                   # whether to visualize during training
     device: str = 'cpu'
     task_id: str = '2493513'
     trial_id: str = '7260554'
@@ -142,7 +142,7 @@ class Args(Tap):
     dynamic_resolution_across_gpus: int = 1 # allow dynamic resolution across gpus
     enable_dynamic_length_prompt: int = 0 # enable dynamic length prompt during training
     use_streaming_dataset: int = 1      # use streaming dataset
-    iterable_data_buffersize: int = 90000 # streaming dataset buffer size
+    iterable_data_buffersize: int = 5000 # streaming dataset buffer size
     save_model_iters_freq: int = 1000   # save model iter freq
     noise_apply_layers: int = -1        # Bitwise Self-Correction: apply noise to layers, -1 means not apply noise
     noise_apply_strength: float = -1    # Bitwise Self-Correction: apply noise strength, -1 means not apply noise
@@ -256,6 +256,7 @@ class Args(Tap):
             seed = self.seed + (dist.get_rank()*512 if self.rand else 0)
             torch.backends.cudnn.deterministic = True
             os.environ['PYTHONHASHSEED'] = str(seed)
+            os.environ["WDS_SEED"] = str(seed)
             random.seed(seed)
             np.random.seed(seed)
             torch.manual_seed(seed)

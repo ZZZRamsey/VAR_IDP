@@ -502,10 +502,13 @@ def train_one_ep(
             
             with maybe_record_function('before_train'):
                 # [get data]
-                src_inp, tgt_inp, text_input = data
+                src_inp, tgt_inp, emb_inp, text_inp, mllm_rec_inp, meta_inp = data
+                
                 src_inp = src_inp.to(args.device, non_blocking=True)
                 tgt_inp = tgt_inp.to(args.device, non_blocking=True)
-                tokens = text_tokenizer(text=text_input, max_length=text_tokenizer.model_max_length, padding='max_length', truncation=True, return_tensors='pt')  # todo: put this into dataset
+                emb_inp = emb_inp.to(args.device, non_blocking=True)
+                
+                tokens = text_tokenizer(text=text_inp, max_length=text_tokenizer.model_max_length, padding='max_length', truncation=True, return_tensors='pt')  # todo: put this into dataset
                 input_ids = tokens.input_ids.cuda(non_blocking=True)
                 mask = tokens.attention_mask.cuda(non_blocking=True)
                 text_features = text_encoder(input_ids=input_ids, attention_mask=mask)['last_hidden_state'].float()
@@ -550,7 +553,7 @@ def train_one_ep(
                     source_inp_B3HW=src_inp,
                     target_inp_B3HW=tgt_inp, 
                     text_cond_tuple=text_cond_tuple,
-                    # clip_features=clip_features,
+                    face_features=emb_inp,
                     args=args,
                 )
             

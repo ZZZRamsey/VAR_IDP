@@ -151,7 +151,7 @@ class InfinityTrainer(object):
     
     def train_step(
         self, ep: int, it: int, g_it: int, stepping: bool, clip_decay_ratio: float, metric_lg: misc.MetricLogger, logging_params: bool,
-        source_inp_B3HW: FTen, target_inp_B3HW: FTen, text_cond_tuple: Union[ITen, FTen], args: arg_util.Args,
+        source_inp_B3HW: FTen, target_inp_B3HW: FTen, text_cond_tuple: Union[ITen, FTen], face_features: FTen, args: arg_util.Args,
     ) -> Tuple[torch.Tensor, Optional[float]]:
         
         B = target_inp_B3HW.shape[0]  # if isinstance(inp_B3HW, torch.Tensor) else inp_B3HW[0].shape[0]
