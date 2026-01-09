@@ -175,7 +175,7 @@ class InfinityTrainer(object):
                         vae_scale_schedule = scale_schedule
                     source_raw_features, _, _ = self.vae_local.encode_for_raw_features(source_inp_B3HW, scale_schedule=vae_scale_schedule)
                     target_raw_features, _, _ = self.vae_local.encode_for_raw_features(target_inp_B3HW, scale_schedule=vae_scale_schedule)
-            
+            ############ 训练可以直接使用预提取的 face_features,shape=512，如果要使用 src 人脸的多尺度特征才需要量化（推理时一定需要 -> 改推理代码 infinity.py 的 autoregressive_infer_cfg）#############
             source_x_BLC_wo_prefix, source_gt_ms_idx_Bl = self.bitwise_self_correction.flip_requant(vae_scale_schedule, source_inp_B3HW, source_raw_features, device, src=True)
             # source_x_BLC_wo_prefix: torch.Size([bs, 1*1+2*2+3*3+...+64*64, d or 4d])
             target_x_BLC_wo_prefix, target_gt_ms_idx_Bl = self.bitwise_self_correction.flip_requant(vae_scale_schedule, target_inp_B3HW, target_raw_features, device)
@@ -196,6 +196,7 @@ class InfinityTrainer(object):
             target_x_BLC_wo_prefix = target_x_BLC_wo_prefix[:, :training_seq_len-np.array(scale_schedule[0]).prod(), :]
             self.gpt_wo_ddp.forward  
             
+            ############################## forward gpt ########################################
             logits_BLV = self.gpt(text_cond_tuple, source_x_BLC_wo_prefix, target_x_BLC_wo_prefix, scale_schedule=scale_schedule[:training_scales])
 
             self.batch_size, self.seq_len = logits_BLV.shape[:2]
@@ -285,6 +286,7 @@ class InfinityTrainer(object):
             acc_tail = acc_bit_list[-1] if args.use_bit_label else acc_token_list[-1]
             metric_lg.update(Lm=Lmean, Lt=Ltail, Accm=acc_mean, Acct=acc_tail, tnm=grad_norm_t)    # todo: Accm, Acct
             wandb_log_dict = {"Overall/L_mean": Lmean, 'Overall/Acc_bit_mean': acc_bit_mean, 'Overall/Acc_token_mean': acc_token_mean, 'Overall/grad_norm_t': grad_norm_t}
+            # wandb_log_dict = {"Overall/L_mean": Lmean, 'Overall/Acc_bit_mean': acc_bit_mean, 'Overall/Acc_token_mean': acc_token_mean, 'Overall/grad_norm_t': grad_norm_t, 'Overall/scale_log2_t': scale_log2_t}
             for si, (loss_si, acc_bit_si, acc_token_si) in enumerate(zip(L_list, acc_bit_list, acc_token_list)):
                 wandb_log_dict[f'Detail/L_s{si+1:02d}'] = loss_si
                 wandb_log_dict[f'Detail/Acc_bit_s{si+1:02d}'] = acc_bit_si

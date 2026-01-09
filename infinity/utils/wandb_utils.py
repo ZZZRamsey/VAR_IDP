@@ -28,6 +28,8 @@ def initialize(args, entity, exp_name, project_name):
     config_dict = namespace_to_dict(args)
     # wandb.login(key="215f5d9c16496a0648e6ac5b2f53fc84d4a4ed5c")
     mode = "offline" if args.wandb_offline else "online"
+    # Ensure WANDB_MODE is set in environment for robustness
+    os.environ["WANDB_MODE"] = mode 
     wandb.init(
         entity=entity,
         project=project_name,
@@ -36,7 +38,13 @@ def initialize(args, entity, exp_name, project_name):
         id=generate_run_id(exp_name),
         resume="allow",
         mode=mode,
+        settings=wandb.Settings(console="wrap")
     )
+
+
+def finish():
+    if wandb.run is not None:
+        wandb.finish()
 
 
 def log(stats, step=None):

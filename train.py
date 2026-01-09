@@ -338,7 +338,7 @@ def main_train(args: arg_util.Args):
     epochs_loss_nan = 0
     # build wandb logger
     if dist.is_master():
-        wandb_utils.wandb.init(project=args.project_name, name=args.exp_name, config={})
+        wandb_utils.initialize(args, entity=None, exp_name=args.exp_name, project_name=args.project_name)
     for ep in range(start_ep, args.ep):
         if ep % ep_lg == 0 or ep == start_ep:
             print(f'[PT info]  from ep{start_ep} it{start_it}, acc_str: {acc_str}, diffs: {args.diffs},    =======>  bed: {args.bed}  <=======\n')
@@ -601,6 +601,13 @@ if __name__ == '__main__':
             traceback.print_exc()
         raise _e
     finally:
+        if dist.is_master():
+            print("[Info] Calling wandb.finish() to ensure logs are saved...", flush=True)
+            try:
+                wandb_utils.finish()
+            except Exception as e:
+                print(f"[Warning] wandb finish failed: {e}", flush=True)
+
         misc.os_system(f'rm -rf {wait1}')
         dist.finalize()
         if isinstance(sys.stdout, dist.BackupStreamToFile) and isinstance(sys.stderr, dist.BackupStreamToFile):

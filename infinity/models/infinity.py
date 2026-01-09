@@ -62,6 +62,7 @@ class MultipleLayers(nn.Module):
         for i in range(index, index+num_blocks_in_a_chunk):
             self.module.append(ls[i])
 
+    ######################### 此处添加start_layer 和 src 参数，用于不同层的不同src尺度注入 #########################
     def forward(self, x, cond_BD, ca_kv, attn_bias_or_two_vector, attn_fn=None, scale_schedule=None, checkpointing_full_block=False, rope2d_freqs_grid=None, start_layer=False, src=True):
         h = x
         for m in self.module:
@@ -69,7 +70,7 @@ class MultipleLayers(nn.Module):
                 h = torch.utils.checkpoint.checkpoint(m, h, cond_BD, ca_kv, attn_bias_or_two_vector, attn_fn, scale_schedule, rope2d_freqs_grid, start_layer, src, use_reentrant=False)
             else:
                 h = m(h, cond_BD, ca_kv, attn_bias_or_two_vector, attn_fn, scale_schedule, rope2d_freqs_grid, start_layer, src)
-            start_layer = False
+            start_layer = False     # only the first block in chunk may use start_layer=True
         return h
 
 class Infinity(nn.Module):
@@ -312,6 +313,7 @@ class Infinity(nn.Module):
                 scale_schedule = full_scale_schedule[:scales_num]
                 scale_schedule = [ (min(t, self.video_frames//4+1), h, w) for (t,h, w) in scale_schedule]
                 patchs_nums_tuple = tuple(scale_schedule)
+                ########################## 把最后一个scale加入 ##########################
                 edit_scale_schedule = [scale_schedule[-1]] + scale_schedule
                 edit_patchs_nums_tuple = tuple(edit_scale_schedule)
 

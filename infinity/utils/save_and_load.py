@@ -53,7 +53,7 @@ class CKPTSaver(object):
         dist.broadcast(self.time_stamp, src_rank=0)
         last_save_time, cur_time = self.time_stamp.cpu().tolist()
         
-        auto_save = cur_time - last_save_time > 20 * 60
+        auto_save = cur_time - last_save_time > 20 * 60     # auto save every 20 minutes
         need_save = also_save_to is not None or best_save_to is not None or next_ep == args.ep or auto_save
         if not need_save:
             return
@@ -63,7 +63,7 @@ class CKPTSaver(object):
         
         # fname = f'ar-ckpt-giter{g_it//1000:03d}K-ep{next_ep}-iter{next_it}-last.pth' if args.gpt_training else f'ckpt-last.pth'
         pn = args.pn
-        fname = f'{pn}-{g_it//1000}K.pth'
+        fname = f'{pn}-{g_it//1000}K-ep{next_ep}-iter{next_it}.pth'
         local_out_ckpt = os.path.join(args.local_out_path, fname)
         
         # NOTE: all rank should call this state_dict(), not master only!
@@ -105,7 +105,9 @@ class CKPTSaver(object):
             #     os.system(cmd)
             
             print(f'[CKPTSaver][rank00] start: {also_save_to=} {best_save_to=} {(next_ep == args.ep)=} {auto_save=}  |  see {local_out_ckpt}', flush=True)
-            print(f'[CKPTSaver][rank00] dbg: {args.bed=}', flush=True)                
+            print(f'[CKPTSaver][rank00] dbg: {args.bed=}', flush=True)     
+            # auto save to args.bed directory     
+      
             # if auto_save:
             #     if self.sp_backup is not None:
             #         self.sp_backup.wait(timeout=300); self.sp_backup.kill(); self.sp_backup.communicate()

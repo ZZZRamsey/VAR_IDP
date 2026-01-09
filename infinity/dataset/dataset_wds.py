@@ -66,23 +66,26 @@ def preprocess(sample):
     
     src_img = PImage.open(io.BytesIO(src)).convert('RGB')
     tgt_img = PImage.open(io.BytesIO(tgt)).convert('RGB')
-    
+
     rec_json = json.loads(mllm_rec.decode('utf-8'))
     meta_json = json.loads(meta.decode('utf-8'))
     
-    # Resize tgt_img with face preservation
-    bboxes = meta_json.get('bbox_before_resize', [])
-    file_name = meta_json.get('file_name', 'unknown')
-    if bboxes:
-        if isinstance(bboxes[0], (int, float)): bboxes = [bboxes]
-        tgt_img_res, new_bbox = general_face_preserving_resize(tgt_img, bboxes, target_size=h)
-        if tgt_img_res is not None:
-            tgt_img = tgt_img_res
-        else:
-            print(f"### {file_name} ### Warning: face preserving resize failed, using normal resize.")
-            tgt_img = pad_image_to_square(tgt_img)
+    if tgt_img.size[0] == h and tgt_img.size[1] == w:
+        pass
     else:
-        tgt_img = pad_image_to_square(tgt_img)
+        # Resize tgt_img with face preservation
+        bboxes = meta_json.get('bbox_before_resize', [])
+        file_name = meta_json.get('file_name', 'unknown')
+        if bboxes:
+            if isinstance(bboxes[0], (int, float)): bboxes = [bboxes]
+            tgt_img_res, new_bbox = general_face_preserving_resize(tgt_img, bboxes, target_size=h)
+            if tgt_img_res is not None:
+                tgt_img = tgt_img_res
+            else:
+                print(f"### {file_name} ### Warning: face preserving resize failed, using normal resize.")
+                tgt_img = pad_image_to_square(tgt_img)
+        else:
+            tgt_img = pad_image_to_square(tgt_img)
 
     src_img = transform(src_img, h, w, file_name)
     tgt_img = transform(tgt_img, h, w, file_name)
@@ -294,7 +297,8 @@ def main():
 # PYTHONPATH=/data1/zls/code/AR/VAR_IDP python infinity/dataset/dataset_wds.py
 if __name__ == '__main__':
     # main()
+    
     data_path = '/data1/zls/code/AR/VAR_IDP/assets/'
     # data_path = '/data1/zls/code/AR/VAR_IDP/data/FaceID-6M/laion_512'   # 等 insightface 预处理完成后再运行
-    tgt_preresize(data_path)
+    # tgt_preresize(data_path)
     

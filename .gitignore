@@ -1,5 +1,6 @@
 HiDream-ai/
 assets/*
+backup/*
 *.swp
 **/__pycache__/**
 **/.ipynb_checkpoints/**
