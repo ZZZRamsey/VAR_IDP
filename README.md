@@ -1,5 +1,4 @@
-# VAREdit
-
+# VAREdit -> VAR_IDP
 ![VAREdit Demo](assets/demo.jpg)
 
 [VAREdit](https://github.com/HiDream-ai/VAREdit) is an advanced image editing model built on the [Infinity](https://huggingface.co/FoundationVision/infinity) models, designed for high-quality instruction-based image editing.
