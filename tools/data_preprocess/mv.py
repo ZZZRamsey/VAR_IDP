@@ -1,6 +1,7 @@
 import os
 import shutil
 from pathlib import Path
+from tqdm import tqdm
 
 def move_npy_files(source_dir: str = "", target_dir: str = "", recursive: bool = False):
     """
@@ -21,6 +22,7 @@ def move_npy_files(source_dir: str = "", target_dir: str = "", recursive: bool =
 
     # 仅查找当前目录下的.npy文件
     npy_files = list(source_path.glob("*.npy"))
+    # npy_files = list(source_path.glob("*.png"))
     
     if not npy_files:
         print("未找到任何.npy文件！")
@@ -29,7 +31,7 @@ def move_npy_files(source_dir: str = "", target_dir: str = "", recursive: bool =
     # 4. 批量移动文件
     moved_count = 0
     skipped_count = 0
-    for npy_file in npy_files:
+    for npy_file in tqdm(npy_files):
         # 构造目标文件路径
         target_file = target_path / npy_file.name
         
@@ -42,7 +44,7 @@ def move_npy_files(source_dir: str = "", target_dir: str = "", recursive: bool =
         # 移动文件
         try:
             shutil.move(str(npy_file), str(target_file))
-            print(f"成功移动：{npy_file.name}")
+            # print(f"成功移动：{npy_file.name}")
             moved_count += 1
         except Exception as e:
             print(f"移动失败：{npy_file.name}，错误信息：{e}")
@@ -59,7 +61,8 @@ def move_npy_files(source_dir: str = "", target_dir: str = "", recursive: bool =
 # -------------------------- 用法示例 --------------------------
 if __name__ == "__main__":
     # 示例1：仅移动当前目录下的.npy文件（默认配置）
-    move_npy_files("/data1/zls/code/AR/VAR_IDP/data/FaceID-6M/laion_512","/data1/zls/code/AR/VAR_IDP/data/FaceID-6M/laion_512/landmark")
+    # move_npy_files("/fs-ift/atlas/zouyuefeng/zls/data/Super-shuhe/FaceID-6M/laion_512","/fs-ift/atlas/zouyuefeng/zls/data/Super-shuhe/FaceID-6M/laion_512/landmark")
+    move_npy_files("/fs-ift/atlas/zouyuefeng/zls/code/VAR_IDP/data/FaceID-6M/laion_512/laion_512/","/fs-ift/atlas/zouyuefeng/zls/code/VAR_IDP/data/FaceID-6M/laion_512/original_img")
     
     # 示例2：递归移动当前目录及所有子文件夹中的.npy文件
     # move_npy_files(recursive=True)

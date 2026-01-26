@@ -199,6 +199,8 @@ class InfinityTrainer(object):
             ############################## forward gpt ########################################
             logits_BLV = self.gpt(text_cond_tuple, source_x_BLC_wo_prefix, target_x_BLC_wo_prefix, scale_schedule=scale_schedule[:training_scales])
 
+            # logits_BLV = self.gpt(text_cond_tuple, target_x_BLC_wo_prefix, scale_schedule=scale_schedule[:training_scales]) # [bs, 1*1+...+64*64, vocab_size or log2(vocab_size)*2]
+
             self.batch_size, self.seq_len = logits_BLV.shape[:2]
 
             self.seq_len_each = [idx_Bl.shape[1] for idx_Bl in target_gt_ms_idx_Bl]

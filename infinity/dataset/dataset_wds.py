@@ -22,7 +22,7 @@ def pad_image_to_square(img):
     return new_img
 
 
-def transform(pil_img, tgt_h, tgt_w, file_name):
+def transform(pil_img, tgt_h, tgt_w, file_name="unknown"):
     """
     Convert PIL Image to normalized tensor.
     Assumes input image is already properly sized (e.g., from general_face_preserving_resize).
@@ -61,41 +61,47 @@ def transform(pil_img, tgt_h, tgt_w, file_name):
     return im.add(im).add_(-1)
 
 def preprocess(sample):
-    src, tgt, txt, emb, mllm_rec, meta = sample
+    src, tgt, emb, mllm_rec, meta = sample
     h, w = dynamic_resolution_h_w[h_div_w_template][PN]['pixel']
     
     src_img = PImage.open(io.BytesIO(src)).convert('RGB')
     tgt_img = PImage.open(io.BytesIO(tgt)).convert('RGB')
 
-    rec_json = json.loads(mllm_rec.decode('utf-8'))
+    # rec_json = json.loads(mllm_rec.decode('utf-8'))
+    rec_json = mllm_rec.decode('utf-8')
+    try:
+        instruction = json.loads(rec_json)
+    except:
+        instruction = "one person"
+    
     meta_json = json.loads(meta.decode('utf-8'))
     
-    if tgt_img.size[0] == h and tgt_img.size[1] == w:
-        pass
-    else:
-        # Resize tgt_img with face preservation
-        bboxes = meta_json.get('bbox_before_resize', [])
-        file_name = meta_json.get('file_name', 'unknown')
-        if bboxes:
-            if isinstance(bboxes[0], (int, float)): bboxes = [bboxes]
-            tgt_img_res, new_bbox = general_face_preserving_resize(tgt_img, bboxes, target_size=h)
-            if tgt_img_res is not None:
-                tgt_img = tgt_img_res
-            else:
-                print(f"### {file_name} ### Warning: face preserving resize failed, using normal resize.")
-                tgt_img = pad_image_to_square(tgt_img)
-        else:
-            tgt_img = pad_image_to_square(tgt_img)
+    # if tgt_img.size[0] == h and tgt_img.size[1] == w:
+    #     pass
+    # else:
+    #     # Resize tgt_img with face preservation
+    #     bboxes = meta_json.get('bbox_before_resize', [])
+    #     file_name = meta_json.get('file_name', 'unknown')
+    #     if bboxes:
+    #         if isinstance(bboxes[0], (int, float)): bboxes = [bboxes]
+    #         tgt_img_res, new_bbox = general_face_preserving_resize(tgt_img, bboxes, target_size=h)
+    #         if tgt_img_res is not None:
+    #             tgt_img = tgt_img_res
+    #         else:
+    #             print(f"### {file_name} ### Warning: face preserving resize failed, using normal resize.")
+    #             tgt_img = pad_image_to_square(tgt_img)
+    #     else:
+    #         tgt_img = pad_image_to_square(tgt_img)
 
-    src_img = transform(src_img, h, w, file_name)
-    tgt_img = transform(tgt_img, h, w, file_name)
+    src_img = transform(src_img, h, w)
+    tgt_img = transform(tgt_img, h, w)
     
     face_emb = np.load(io.BytesIO(emb))
     face_emb_tensor = torch.from_numpy(face_emb)
     
-    instruction = txt.decode('utf-8')
+    # instruction = txt.decode('utf-8')
     
-    return src_img, tgt_img, face_emb_tensor, instruction, rec_json, meta_json
+    return src_img, tgt_img, face_emb_tensor, instruction, meta_json
 
 def WDS_Train_Dataset(
     data_path,
@@ -150,13 +156,13 @@ def WDS_Train_Dataset(
         resampled=True,
         handler=wds.handlers.warn_and_continue,
     ).with_length(overall_length).shuffle(buffersize) \
-        .to_tuple("src.png", "tgt.png", "txt", "npy", "mllm_rec.json", "meta.json") \
+        .to_tuple("src.png", "tgt.png", "npy", "mllm_rec.json", "meta.json") \
         .map(preprocess) \
         .batched(batch_size, partial=False) \
         .with_epoch(steps_per_epoch)
     return dataset
 
-def tgt_preresize(data_path, tgt_size=1024):
+def tgt_preresize(data_path, tgt_size=512):
     from pathlib import Path
     import concurrent.futures
 
@@ -176,13 +182,53 @@ def tgt_preresize(data_path, tgt_size=1024):
     os.makedirs(new_bbox_dir, exist_ok=True)
     new_bbox_json = os.path.join(new_bbox_dir, f'resized_bbox_{h}_{w}.json')
 
+    # -----------------------------------------------------------
+    # ####### [修改 START]：加载历史进度 & 预过滤任务列表 #######
+    
+    # 1. 尝试加载现有的 JSON 记录
+    if os.path.exists(new_bbox_json):
+        try:
+            with open(new_bbox_json, 'r') as f:
+                new_bbox_dict = json.load(f)
+            print(f"已加载现有断点记录，包含 {len(new_bbox_dict)} 个条目。")
+        except Exception as e:
+            print(f"现有 JSON 文件损坏或无法读取，将重新开始: {e}")
+            new_bbox_dict = {}
+
+    # 2. 过滤任务列表 (最小损耗检查)
+    todo_files = []
+    already_exist_count = 0
+    
+    print("正在检查断点恢复情况...")
+    for jf in json_files:
+        stem = jf.stem
+        # 预测目标图片路径
+        target_img_path = os.path.join(tgt_resized_dir, f"{stem}.png")
+        
+        # 核心优化逻辑：
+        # (1) stem in new_bbox_dict: 内存哈希查找，极快 (O(1))
+        # (2) os.path.exists: 系统调用，较慢
+        # 利用 'and' 的短路特性：如果 (1) 为 False，就不会执行 (2)
+        if stem in new_bbox_dict and os.path.exists(target_img_path):
+            already_exist_count += 1
+            continue
+        else:
+            todo_files.append(jf)
+
+    print(f"检查完毕。总文件: {len(json_files)}，已存在: {already_exist_count}，待处理: {len(todo_files)}")
+    
+    if len(todo_files) == 0:
+        print("所有任务均已完成，无需处理。")
+        return
+    # ####### [修改 END] #######
+    # -----------------------------------------------------------
+
     def process_one_file(json_file):
         stem = json_file.stem
         local_skipped = 0
         local_side_face = 0
         local_new_bbox = None
 
-        # 1. 检查 is_side_face
         try:
             with open(json_file, 'r') as f:
                 meta_data = json.load(f)
@@ -191,18 +237,19 @@ def tgt_preresize(data_path, tgt_size=1024):
             local_skipped = 1
             return stem, local_skipped, local_side_face, local_new_bbox
             
-        pose = meta_data.get('pose', None)
-        yaw_threshold = 60  # 侧脸阈值
-        if pose is not None:
-            pitch, yaw, roll = pose
-            if abs(yaw) > yaw_threshold:
-                local_side_face = 1
-                return stem, local_skipped, local_side_face, local_new_bbox
+        # 1. 检查 is_side_face
+        # pose = meta_data.get('pose', None)
+        # yaw_threshold = 70  # 侧脸阈值
+        # if pose is not None:
+        #     pitch, yaw, roll = pose
+        #     if abs(yaw) > yaw_threshold:
+        #         local_side_face = 1
+        #         return stem, local_skipped, local_side_face, local_new_bbox
 
         # 2. resize
-        tgt_img_path = os.path.join(data_path, f"{stem}.png")
+        tgt_img_path = os.path.join(data_path, "original_img", f"{stem}.png")
         if not os.path.exists(tgt_img_path):
-            tgt_img_path = os.path.join(data_path, f"{stem}.jpg")
+            tgt_img_path = os.path.join(data_path, "original_img", f"{stem}.jpg")
         if not os.path.exists(tgt_img_path):
             local_skipped = 1
             return stem, local_skipped, local_side_face, local_new_bbox
@@ -247,6 +294,7 @@ def tgt_preresize(data_path, tgt_size=1024):
                 else:
                     pass
                 save_path = os.path.join(tgt_resized_dir, f"{stem}.png")
+                # if not os.path.exists(save_path):
                 img.save(save_path)
         except Exception as e:
             print(f"处理图像 {tgt_img_path} 出错: {e}")
@@ -255,7 +303,7 @@ def tgt_preresize(data_path, tgt_size=1024):
         return stem, local_skipped, local_side_face, local_new_bbox
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        results = list(tqdm(executor.map(process_one_file, json_files), total=len(json_files), desc="处理JSON文件"))
+        results = list(tqdm(executor.map(process_one_file, todo_files), total=len(todo_files), desc="处理JSON文件"))
 
     for stem, skipped, side_face, new_bbox in results:
         skipped_count += skipped
@@ -298,7 +346,7 @@ def main():
 if __name__ == '__main__':
     # main()
     
-    data_path = '/data1/zls/code/AR/VAR_IDP/assets/'
-    # data_path = '/data1/zls/code/AR/VAR_IDP/data/FaceID-6M/laion_512'   # 等 insightface 预处理完成后再运行
-    # tgt_preresize(data_path)
+    # data_path = '/fs-ift/atlas/zouyuefeng/zls/code/VAR_IDP/data/assets'
+    data_path = '/fs-ift/atlas/zouyuefeng/zls/code/VAR_IDP/data/FaceID-6M/laion_512'   # 等 insightface 预处理完成后再运行
+    tgt_preresize(data_path)
     

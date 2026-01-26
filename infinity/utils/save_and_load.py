@@ -135,7 +135,15 @@ class CKPTSaver(object):
         dist.barrier()
         
 
-def auto_resume(args: arg_util.Args, pattern='ckpt*.pth') -> Tuple[List[str], int, int, str, List[Tuple[float, float]], dict, dict]:
+def auto_resume(args: arg_util.Args, pattern=None) -> Tuple[List[str], int, int, str, List[Tuple[float, float]], dict, dict]:
+    if pattern is None:
+        # Use pn (model size) to construct pattern if available
+        pn = getattr(args, 'pn', None)
+        if pn:
+            pattern = f'{pn}-*K-ep*-iter*.pth'
+        else:
+            pattern = 'ckpt*.pth'
+    
     info = []
     resume = ''
     if args.auto_resume:

@@ -6,6 +6,7 @@ import subprocess
 import sys
 import time
 import datetime
+import hashlib
 from collections import OrderedDict, deque
 from typing import Optional, Union
 
@@ -28,6 +29,7 @@ class Args(Tap):
     project_name: str = 'Infinity'      # name of wandb project
     tf32: bool = True                   # whether to use TensorFloat32
     auto_resume: bool = True            # whether to automatically resume from the last checkpoint found in args.bed
+    run_id: str = ''                    # wandb run id
     rush_resume: str = ''               # pretrained infinity checkpoint
     nowd: int = 1                       # whether to disable weight decay on sparse params (like class token)
     enable_hybrid_shard: bool = False   # whether to use hybrid FSDP
@@ -361,6 +363,18 @@ def init_dist_and_get_args():
             del sys.argv[i]
             break
     args = Args(explicit_bool=True).parse_args(known_only=True)
+    
+    if len(args.exp_name) == 0:
+        args.exp_name = os.path.basename(args.bed) or 'test_exp'
+    
+    if '-' in args.exp_name:
+        args.tag, args.exp_name = args.exp_name.split('-', maxsplit=1)
+    else:
+        args.tag = 'UK'
+    
+    # Generate run_id
+    args.run_id = str(int(hashlib.sha256(args.exp_name.encode('utf-8')).hexdigest(), 16) % 10 ** 8)
+
     args.chunk_nodes = int(os.environ.get('CK', '') or '0')
     
     if len(args.extra_args) > 0 and args.is_master_node == 0:
@@ -372,11 +386,6 @@ def init_dist_and_get_args():
     args.set_tf32(args.tf32)
     if args.dbg:
         torch.autograd.set_detect_anomaly(True)
-    
-    # TODO: multi node trianing timestamped output dir
-    # if dist.is_local_master():
-    #     timestamp = datetime.datetime.now().strftime('run-%Y%m%d_%H%M%S-%f')[:24]
-    #     args.local_out_path = os.path.join(args.local_out_path, timestamp)
 
     try: os.makedirs(args.bed, exist_ok=True)
     except: pass
@@ -384,21 +393,21 @@ def init_dist_and_get_args():
     day3 = 60*24*3
     dist.init_distributed_mode(local_out_path=None, fork=False, timeout_minutes=day3 if int(os.environ.get('LONG_DBG', '0') or '0') > 0 else 30)
 
-    # Now dist is initialized. Update local_out_path with timestamp
+    # Now dist is initialized. Update local_out_path with run_dir_name
     if dist.is_master():
-        timestamp = datetime.datetime.now().strftime('run-%Y%m%d_%H%M%S')
+        run_dir_name = f"run_{args.run_id}"
         # We need to send this string to other processes.
         # Broadcasting strings is not directly supported by torch.distributed.broadcast
         # We can convert to tensor or use a list of objects.
-        timestamp_list = [timestamp]
+        run_dir_name_list = [run_dir_name]
     else:
-        timestamp_list = [None]
+        run_dir_name_list = [None]
     
     if dist.initialized():
-        torch.distributed.broadcast_object_list(timestamp_list, src=0)
+        torch.distributed.broadcast_object_list(run_dir_name_list, src=0)
     
-    timestamp = timestamp_list[0]
-    args.local_out_path = os.path.join(args.local_out_path, timestamp)
+    run_dir_name = run_dir_name_list[0]
+    args.local_out_path = os.path.join(args.local_out_path, run_dir_name)
     
     if dist.is_local_master():
         try: os.makedirs(args.local_out_path, exist_ok=True)
@@ -488,14 +497,6 @@ def init_dist_and_get_args():
     args.enable_checkpointing = "full-block" if args.enable_checkpointing in [True, 1, "1"] else args.enable_checkpointing
     assert args.enable_checkpointing in [None, "full-block", "full-attn", "self-attn"], \
         f"only support no-checkpointing or full-block/full-attn checkpointing, but got {args.enable_checkpointing}."
-    
-    if len(args.exp_name) == 0:
-        args.exp_name = os.path.basename(args.bed) or 'test_exp'
-    
-    if '-' in args.exp_name:
-        args.tag, args.exp_name = args.exp_name.split('-', maxsplit=1)
-    else:
-        args.tag = 'UK'
     
     if dist.is_master():
         os.system(f'rm -rf {os.path.join(args.bed, "ready-node*")} {os.path.join(args.local_out_path, "ready-node*")}')

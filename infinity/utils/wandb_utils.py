@@ -26,16 +26,22 @@ def generate_run_id(exp_name):
 
 def initialize(args, entity, exp_name, project_name):
     config_dict = namespace_to_dict(args)
-    # wandb.login(key="215f5d9c16496a0648e6ac5b2f53fc84d4a4ed5c")
     mode = "offline" if args.wandb_offline else "online"
     # Ensure WANDB_MODE is set in environment for robustness
     os.environ["WANDB_MODE"] = mode 
+    
+    if hasattr(args, 'run_id') and args.run_id:
+        run_id = args.run_id
+    else:
+        run_id = generate_run_id(exp_name)
+        
+    print(f"Initializing wandb with run ID: {run_id}")
     wandb.init(
         entity=entity,
         project=project_name,
         name=exp_name,
         config=config_dict,
-        id=generate_run_id(exp_name),
+        id=run_id,
         resume="allow",
         mode=mode,
         settings=wandb.Settings(console="wrap")

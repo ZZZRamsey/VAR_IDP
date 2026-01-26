@@ -1,24 +1,9 @@
 import os
 import os.path as osp
-
+import cv2
 import torch
 import torch.nn.functional as F
 import numpy as np
-
-
-def labels2image(all_indices, label_type='int_label', scale_schedule=None):
-    summed_codes, recons_imgs = self.vae.decode_from_indices(all_indices, scale_schedule, label_type)
-    recons_img = recons_imgs[0]
-    recons_img = (recons_img + 1) / 2
-    recons_img = recons_img.permute(1, 2, 0).mul_(255).cpu().numpy().astype(np.uint8)[:,:,::-1]
-    return recons_img
-
-def features2image(raw_features):
-    recons_imgs = self.vae.decode(raw_features.squeeze(-3))
-    recons_img = recons_imgs[0]
-    recons_img = (recons_img + 1) / 2
-    recons_img = recons_img.permute(1, 2, 0).mul_(255).cpu().numpy().astype(np.uint8)[:,:,::-1]
-    return recons_img
 
 class BitwiseSelfCorrection(object):
     def __init__(self, vae, args):
@@ -29,6 +14,20 @@ class BitwiseSelfCorrection(object):
         self.vae = vae
         self.debug_bsc = args.debug_bsc
 
+    def labels2image(self, all_indices, label_type='int_label', scale_schedule=None):
+        summed_codes, recons_imgs = self.vae.decode_from_indices(all_indices, scale_schedule, label_type)
+        recons_img = recons_imgs[0]
+        recons_img = (recons_img + 1) / 2
+        recons_img = recons_img.permute(1, 2, 0).mul_(255).cpu().numpy().astype(np.uint8)[:,:,::-1]
+        return recons_img
+
+    def features2image(self, raw_features):
+        recons_imgs = self.vae.decode(raw_features.squeeze(-3))
+        recons_img = recons_imgs[0]
+        recons_img = (recons_img + 1) / 2
+        recons_img = recons_img.permute(1, 2, 0).mul_(255).cpu().numpy().astype(np.uint8)[:,:,::-1]
+        return recons_img
+    
     def flip_requant(self, vae_scale_schedule, inp_B3HW, raw_features, device, src=False):
         with torch.amp.autocast('cuda', enabled = False):
             B = raw_features.shape[0]
@@ -94,8 +93,8 @@ class BitwiseSelfCorrection(object):
     def visualize(self, vae_scale_schedule, inp_B3HW, gt_all_bit_indices, pred_all_bit_indices):
         gt_img = (inp_B3HW.squeeze(-3) + 1) / 2 * 255
         gt_img = gt_img[0].permute(1,2,0).cpu().numpy().astype(np.uint8)[:,:,::-1]
-        recons_img_2 = labels2image(gt_all_bit_indices, label_type='bit_label', scale_schedule=vae_scale_schedule)
-        recons_img_3 = labels2image(pred_all_bit_indices, label_type='bit_label', scale_schedule=vae_scale_schedule)
+        recons_img_2 = self.labels2image(gt_all_bit_indices, label_type='bit_label', scale_schedule=vae_scale_schedule)
+        recons_img_3 = self.labels2image(pred_all_bit_indices, label_type='bit_label', scale_schedule=vae_scale_schedule)
         cat_image = np.concatenate([gt_img, recons_img_2, recons_img_3], axis=1)
         save_path = osp.abspath('non_teacher_force.jpg')
         cv2.imwrite(save_path, cat_image)

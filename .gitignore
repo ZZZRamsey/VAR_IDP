@@ -1,6 +1,7 @@
 HiDream-ai/
 assets/*
 backup/*
+infer_output/*
 *.swp
 **/__pycache__/**
 **/.ipynb_checkpoints/**
@@ -46,7 +47,7 @@ results/
 *.JPEG
 debug/
 weights
-checkpoints
+pretrain/
 ref.py
 wandb
 .DS_Store

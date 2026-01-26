@@ -5,6 +5,7 @@ import os
 import random
 import sys
 import time
+import wandb
 import traceback
 from collections import deque
 from contextlib import nullcontext
@@ -64,7 +65,7 @@ def build_everything_from_args(args: arg_util.Args, saver):
     )
     
     # auto resume from broken experiment
-    auto_resume_info, start_ep, start_it, acc_str, eval_milestone, trainer_state, args_state = auto_resume(args, 'ar-ckpt*.pth')
+    auto_resume_info, start_ep, start_it, acc_str, eval_milestone, trainer_state, args_state = auto_resume(args)
     print(f'global bs={args.glb_batch_size}, local bs={args.batch_size}')
     print(f'initial args:\n{str(args)}')
     args.dump_log()
@@ -413,7 +414,11 @@ def main_train(args: arg_util.Args):
             }
         else: law_stats = None
         if dist.is_master() and law_stats is not None:
-            stat_file = os.path.join(args.bed, 'law.stat')
+            law_stat_dir = args.bed
+            if wandb.run is not None and wandb.run.dir:
+                law_stat_dir = wandb.run.dir
+
+            stat_file = os.path.join(law_stat_dir, 'law.stat')
             if os.path.exists(stat_file):
                 with open(stat_file, 'r', encoding='utf-8') as law_fp: tag_to_epv = json.load(law_fp)
             else:
@@ -423,7 +428,7 @@ def main_train(args: arg_util.Args):
             with open(stat_file, 'w', encoding='utf-8') as law_fp: json.dump(tag_to_epv, law_fp, indent=2)
             
             # ============= LEGACY =============
-            with open(os.path.join(args.bed, 'law'), 'w') as law_fp:
+            with open(os.path.join(law_stat_dir, 'law'), 'w') as law_fp:
                 json.dump({
                     'last_Lm': last_val_loss_mean, 'best_Lm': best_val_loss_mean, 'last_Am': last_val_acc_mean, 'best_Am': best_val_acc_mean,
                     'last_Lt': last_val_loss_tail, 'best_Lt': best_val_loss_tail, 'last_At': last_val_acc_tail, 'best_At': best_val_acc_tail,
@@ -502,13 +507,13 @@ def train_one_ep(
             
             with maybe_record_function('before_train'):
                 # [get data]
-                src_inp, tgt_inp, emb_inp, text_inp, mllm_rec_inp, meta_inp = data
+                src_inp, tgt_inp, emb_inp, mllm_rec_inp, meta_info_json = data
                 
                 src_inp = src_inp.to(args.device, non_blocking=True)
                 tgt_inp = tgt_inp.to(args.device, non_blocking=True)
                 emb_inp = emb_inp.to(args.device, non_blocking=True)
                 
-                tokens = text_tokenizer(text=text_inp, max_length=text_tokenizer.model_max_length, padding='max_length', truncation=True, return_tensors='pt')  # todo: put this into dataset
+                tokens = text_tokenizer(text=mllm_rec_inp, max_length=text_tokenizer.model_max_length, padding='max_length', truncation=True, return_tensors='pt')  # todo: put this into dataset
                 input_ids = tokens.input_ids.cuda(non_blocking=True)
                 mask = tokens.attention_mask.cuda(non_blocking=True)
                 text_features = text_encoder(input_ids=input_ids, attention_mask=mask)['last_hidden_state'].float()

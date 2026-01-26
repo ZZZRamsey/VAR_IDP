@@ -38,7 +38,7 @@ def save_json(path, data):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data_root', type=str, default='/data1/zls/code/AR/VAR_IDP/data/FaceID-6M/laion_512')
+    parser.add_argument('--data_root', type=str, default='/fs-ift/atlas/zouyuefeng/zls/code/VAR_IDP/data/FaceID-6M/laion_512')
     # parser.add_argument('--data_root', type=str, default='/data1/zls/code/AR/VAR_IDP/assets')
     args = parser.parse_args()
 

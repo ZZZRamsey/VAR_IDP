@@ -240,19 +240,23 @@ def general_face_preserving_resize(img, face_bboxes, target_size=512):
     if img.width > img.height:
         # Crop width to make a square
         square_size = img.height
+                
+        # # Calculate valid horizontal crop range that preserves all faces
+        # left_max = min_x1  # Leftmost position that includes leftmost face
+        # right_min = max_x2 - square_size  # Rightmost position that includes rightmost face
         
-        # Calculate valid horizontal crop range
-        left_max = min_x1
-        right_min = max_x2 - square_size
-        
-        if right_min <= left_max:
-            # We can find a valid crop window
-            start = random.randint(int(right_min), int(left_max)) if right_min < left_max else int(right_min)
-            start = max(0, min(start, img.width - square_size))
-        else:
-            # Faces are too far apart - use center of faces
-            face_center = (min_x1 + max_x2) // 2
-            start = max(0, min(face_center - (square_size // 2), img.width - square_size))
+        # if right_min <= left_max:
+        #     # We can find a valid crop window
+        #     start = random.randint(int(right_min), int(left_max)) if right_min < left_max else int(right_min)
+        #     start = max(0, min(start, img.width - square_size))  # Ensure within image bounds
+        # else:
+        #     # Faces are too far apart for square crop - use center of faces
+        #     face_center = (min_x1 + max_x2) // 2
+        #     start = max(0, min(face_center - (square_size // 2), img.width - square_size))
+
+        # Center the crop based on the center of the faces
+        face_center = (min_x1 + max_x2) // 2
+        start = max(0, min(face_center - (square_size // 2), img.width - square_size))
         
         cropped_img = img.crop((start, 0, start + square_size, square_size))
         
@@ -263,17 +267,23 @@ def general_face_preserving_resize(img, face_bboxes, target_size=512):
     else:
         # Crop height to make a square
         square_size = img.width
+
+        # # Calculate valid vertical crop range that preserves all faces
+        # top_max = min_y1  # Topmost position that includes topmost face
+        # bottom_min = max_y2 - square_size  # Bottommost position that includes bottommost face
         
-        # Calculate valid vertical crop range
-        top_max = min_y1
-        bottom_min = max_y2 - square_size
-        
-        if bottom_min <= top_max:
-            start = random.randint(int(bottom_min), int(top_max)) if bottom_min < top_max else int(bottom_min)
-            start = max(0, min(start, img.height - square_size))
-        else:
-            face_center = (min_y1 + max_y2) // 2
-            start = max(0, min(face_center - (square_size // 2), img.height - square_size))
+        # if bottom_min <= top_max:
+        #     # We can find a valid crop window
+        #     start = random.randint(int(bottom_min), int(top_max)) if bottom_min < top_max else int(bottom_min)
+        #     start = max(0, min(start, img.height - square_size))  # Ensure within image bounds
+        # else:
+        #     # Faces are too far apart for square crop - use center of faces
+        #     face_center = (min_y1 + max_y2) // 2
+        #     start = max(0, min(face_center - (square_size // 2), img.height - square_size))
+
+        # Center the crop based on the center of the faces
+        face_center = (min_y1 + max_y2) // 2
+        start = max(0, min(face_center - (square_size // 2), img.height - square_size))
         
         cropped_img = img.crop((0, start, square_size, start + square_size))
         
