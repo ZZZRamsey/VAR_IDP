@@ -5,7 +5,7 @@ Definitions of blocks of VAR transformer model.
 import math
 import os
 from functools import partial
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Union, List
 
 import torch
 import torch.nn as nn
@@ -39,15 +39,15 @@ def precompute_rope2d_freqs_grid(dim, dynamic_resolution_h_w, rope2d_normalized_
     # split the dimension into half, one for x and one for y
     half_dim = dim // 2
     inv_freq = 1.0 / (base ** (torch.arange(0, half_dim, 2, dtype=torch.int64).float().to(device) / half_dim)) # namely theta, 1 / (10000^(i/half_dim)), i=0,2,..., half_dim-2
-    t_height = torch.arange(max_height, device=device, dtype=torch.int64).type_as(inv_freq)
-    t_width = torch.arange(max_width, device=device, dtype=torch.int64).type_as(inv_freq)
+    t_height = torch.arange(max_height * 2, device=device, dtype=torch.int64).type_as(inv_freq)
+    t_width = torch.arange(max_width * 2, device=device, dtype=torch.int64).type_as(inv_freq)
     t_height = t_height / scaling_factor
     freqs_height = torch.outer(t_height, inv_freq)  # (max_height, dim / (1 for 1d, 2 for 2d, 3 for 3d) / 2), namely y*theta
     t_width = t_width / scaling_factor
     freqs_width = torch.outer(t_width, inv_freq)  # (max_width, dim / (1 for 1d, 2 for 2d, 3 for 3d) / 2), namely x*theta
     freqs_grid_map = torch.concat([
-        freqs_height[:, None, :].expand(-1, max_width, -1), # (max_height, max_width, dim / (1 for 1d, 2 for 2d, 3 for 3d) / 2)
-        freqs_width[None, :, :].expand(max_height, -1, -1), # (max_height, max_width, dim / (1 for 1d, 2 for 2d, 3 for 3d) / 2)
+        freqs_height[:, None, :].expand(-1, max_width * 2, -1), # (max_height, max_width, dim / (1 for 1d, 2 for 2d, 3 for 3d) / 2)
+        freqs_width[None, :, :].expand(max_height * 2, -1, -1), # (max_height, max_width, dim / (1 for 1d, 2 for 2d, 3 for 3d) / 2)
     ], dim=-1)  # (max_height, max_width, dim / (1 for 1d, 2 for 2d, 3 for 3d))
     freqs_grid_map = torch.stack([torch.cos(freqs_grid_map), torch.sin(freqs_grid_map)], dim=0)
     # (2, max_height, max_width, dim / (1 for 1d, 2 for 2d, 3 for 3d))
@@ -61,27 +61,39 @@ def precompute_rope2d_freqs_grid(dim, dynamic_resolution_h_w, rope2d_normalized_
             uph, upw = max_edge_length, int(max_edge_length / ph * pw)
         else:
             uph, upw = int(max_edge_length / pw * ph), max_edge_length
+        
         rope_cache_list = []
-        for (_, ph, pw) in scale_schedule:
+        _, uph, upw = scale_schedule[-1]
+        src_indices = torch.stack([
+            (torch.arange(uph)).reshape(uph, 1).expand(uph, upw) + uph,
+            (torch.arange(upw)).reshape(1, upw).expand(uph, upw) + upw,
+        ], dim=-1).round().int()
+        src_indices = src_indices.reshape(-1, 2)
+        src_rope_cache = freqs_grid_map[:, src_indices[:,0], src_indices[:,1], :] # (2, ph*pw, half_head_dim)
+        src_rope_cache = src_rope_cache.reshape(2, uph, upw, -1)
+        rope_cache_list.append(src_rope_cache.reshape(2, uph * upw, -1))
+
+        for i, (_, ph, pw) in enumerate(scale_schedule):
             ph_mul_pw = ph * pw
             if rope2d_normalized_by_hw == 1: # downsample
-                rope_cache = F.interpolate(freqs_grid_map[:, :uph, :upw, :].permute([0,3,1,2]), size=(ph, pw), mode='bilinear', align_corners=True)
-                rope_cache = rope_cache.permute([0,2,3,1]) # (2, ph, pw, half_head_dim)
+                tgt_rope_cache = F.interpolate(freqs_grid_map[:, :uph, :upw, :].permute([0,3,1,2]), size=(ph, pw), mode='bilinear', align_corners=True)
+                tgt_rope_cache = tgt_rope_cache.permute([0,2,3,1]) # (2, ph, pw, half_head_dim)
             elif rope2d_normalized_by_hw == 2: # star stylee
                 _, uph, upw = scale_schedule[-1]
-                indices = torch.stack([
+                tgt_indices = torch.stack([
                     (torch.arange(ph) * (uph / ph)).reshape(ph, 1).expand(ph, pw),
                     (torch.arange(pw) * (upw / pw)).reshape(1, pw).expand(ph, pw),
-                ], dim=-1).round().int() # (ph, pw, 2)
-                indices = indices.reshape(-1, 2) # (ph*pw, 2)
-                rope_cache = freqs_grid_map[:, indices[:,0], indices[:,1], :] # (2, ph*pw, half_head_dim)
-                rope_cache = rope_cache.reshape(2, ph, pw, -1)
+                ], dim=-1).round().int()
+                tgt_indices = tgt_indices.reshape(-1, 2)  # (ph*pw, 2)
+                tgt_rope_cache = freqs_grid_map[:, tgt_indices[:,0], tgt_indices[:,1], :] # (2, ph*pw, half_head_dim)
+                tgt_rope_cache = tgt_rope_cache.reshape(2, ph, pw, -1)
             elif rope2d_normalized_by_hw == 0:
-                rope_cache = freqs_grid_map[:, :ph, :pw, :] # (2, ph, pw, half_head_dim)
+                tgt_rope_cache = freqs_grid_map[:, :ph, :pw, :] # (2, ph, pw, half_head_dim)
             else:
                 raise ValueError(f'Unknown rope2d_normalized_by_hw: {rope2d_normalized_by_hw}')
-            rope_cache_list.append(rope_cache.reshape(2, ph_mul_pw, -1))
+            rope_cache_list.append(tgt_rope_cache.reshape(2, ph_mul_pw, -1))
         cat_rope_cache = torch.cat(rope_cache_list, 1) # (2, seq_len, half_head_dim)
+        
         if cat_rope_cache.shape[1] % pad_to_multiplier:
             pad = torch.zeros(2, pad_to_multiplier - cat_rope_cache.shape[1] % pad_to_multiplier, half_dim)
             cat_rope_cache = torch.cat([cat_rope_cache, pad], dim=1)
@@ -93,16 +105,21 @@ def precompute_rope2d_freqs_grid(dim, dynamic_resolution_h_w, rope2d_normalized_
     return rope2d_freqs_grid
 
 
-def apply_rotary_emb(q, k, scale_schedule, rope2d_freqs_grid, pad_to_multiplier, rope2d_normalized_by_hw, scale_ind):
+def apply_rotary_emb(q, k, scale_schedule, rope2d_freqs_grid, pad_to_multiplier, rope2d_normalized_by_hw, scale_ind, src=True):
     qk = torch.stack((q, k), dim=0)  #(2, batch_size, heads, seq_len, head_dim)
     device_type = qk.device.type
     device_type = device_type if isinstance(device_type, str) and device_type != "mps" else "cpu"
     with torch.autocast(device_type=device_type, enabled=False):
         seq_len = qk.shape[3]
+        assert len(scale_schedule[0]) == 3
         start = 0
-        if scale_ind >= 1:
-            assert len(scale_schedule[0]) == 3
-            start = np.sum([item[0] * item[1] * item[2] for item in scale_schedule[:scale_ind]])
+        
+        if not src:
+            start += np.array(scale_schedule[-1]).prod()
+            for i in range(scale_ind):
+                start += np.array(scale_schedule[i]).prod()
+
+        start = int(start)
         rope2d_freqs_grid[str(tuple(scale_schedule))] = rope2d_freqs_grid[str(tuple(scale_schedule))].to(qk.device)
         assert start+seq_len <= rope2d_freqs_grid[str(tuple(scale_schedule))].shape[4]
         rope_cache = rope2d_freqs_grid[str(tuple(scale_schedule))][:, :, :, :, start:start+seq_len] # rope_cache shape: [2, 1, 1, 1, seq_len, half_head_dim]
@@ -243,9 +260,11 @@ class SelfAttention(nn.Module):
         self.caching = enable
         self.cached_k = None
         self.cached_v = None
+        self.cached_init_k = None
+        self.cached_init_v = None
     
     # NOTE: attn_bias_or_two_vector is None during inference
-    def forward(self, x, attn_bias_or_two_vector: Union[torch.Tensor, Tuple[torch.IntTensor, torch.IntTensor]], attn_fn=None, scale_schedule=None, rope2d_freqs_grid=None, scale_ind=0):
+    def forward(self, x, attn_bias_or_two_vector: Union[torch.Tensor, Tuple[torch.IntTensor, torch.IntTensor]], attn_fn=None, scale_schedule=None, rope2d_freqs_grid=None, start_layer=False, scale_ind=0, src=True):
         """
         :param (fp32) x: shaped (B or batch_size, L or seq_length, C or hidden_dim); if seq-parallel is used, the `L` dim would be shared
         :param (fp32) attn_bias_or_two_vector:
@@ -288,12 +307,64 @@ class SelfAttention(nn.Module):
             k = k.contiguous()      # bf16
             v = v.contiguous()      # bf16
         if rope2d_freqs_grid is not None:
-            q, k = apply_rotary_emb(q, k, scale_schedule, rope2d_freqs_grid, self.pad_to_multiplier, self.rope2d_normalized_by_hw, scale_ind) #, freqs_cis=freqs_cis)
-        if self.caching:    # kv caching: only used during inference
-            if self.cached_k is None: self.cached_k = k; self.cached_v = v
-            else: k = self.cached_k = torch.cat((self.cached_k, k), dim=L_dim); v = self.cached_v = torch.cat((self.cached_v, v), dim=L_dim)
+            q, k = apply_rotary_emb(q, k, scale_schedule, rope2d_freqs_grid, self.pad_to_multiplier, self.rope2d_normalized_by_hw, scale_ind, src=src) #, freqs_cis=freqs_cis)
         
-        if self.using_flash:
+        def down_func(tensor, src_scale, tgt_scale):
+            """
+            Downsample the tensor from src_scale to tgt_scale with area interpolation.
+            :param tensor: [B, H, L, c]
+            :param src_scale: (1, h, w)
+            :param tgt_scale: (1, h, w)
+            :return: [B, H, L', c]
+            """
+            B, H, L, C = tensor.shape
+            src_h, src_w = src_scale[-2], src_scale[-1]
+            tgt_h, tgt_w = tgt_scale[-2], tgt_scale[-1]
+            if src_h == tgt_h and src_w == tgt_w:
+                return tensor
+            else:
+                # area interpolation
+                tensor = tensor.permute(0, 1, 3, 2)
+                tensor = tensor.reshape(B, H, C, src_h, src_w).reshape(B, -1, src_h, src_w)
+                tensor = F.interpolate(tensor, size=(tgt_h, tgt_w), mode='area')
+                tensor = tensor.reshape(B, H, C, tgt_h, tgt_w).reshape(B, H, C, -1)
+                tensor = tensor.permute(0, 1, 3, 2)
+                return tensor
+
+        if self.caching:    # kv caching: only used during inference
+            if start_layer:
+                if self.cached_init_k is None: self.cached_init_k = k; self.cached_init_v = v
+                else:
+                    k_src = down_func(self.cached_init_k, scale_schedule[-1], scale_schedule[scale_ind])
+                    v_src = down_func(self.cached_init_v, scale_schedule[-1], scale_schedule[scale_ind])
+                    if self.cached_k is None: self.cached_k = k; self.cached_v = v
+                    else: k = self.cached_k = torch.cat((self.cached_k, k), dim=L_dim); v = self.cached_v = torch.cat((self.cached_v, v), dim=L_dim)
+                    k = torch.cat([k_src, k], dim=L_dim);  v = torch.cat([v_src, v], dim=L_dim)
+            else:
+                if self.cached_k is None: self.cached_k = k; self.cached_v = v
+                else: k = self.cached_k = torch.cat((self.cached_k, k), dim=L_dim); v = self.cached_v = torch.cat((self.cached_v, v), dim=L_dim)
+
+        if not self.caching and start_layer:  # train & first layer
+            length_list = [int(np.array(scale_schedule[i]).prod()) for i in range(len(scale_schedule))]
+            length_list = [length_list[-1]] + length_list
+            length_list += [L - sum(length_list)]
+            q_list = torch.split(q, length_list, dim=L_dim)  # [B, H, L, c]
+            k_list = torch.split(k, length_list, dim=L_dim)  # [B, H, L, c]
+            v_list = torch.split(v, length_list, dim=L_dim)  # [B, H, L, c]
+            outputs = []
+            for i in range(len(length_list)-1):
+                k_src = down_func(k_list[0], scale_schedule[-1], scale_schedule[i-1])
+                k_cal = torch.cat([k_src, *k_list[1:i+1]], dim=L_dim) if i > 0 else k_src
+                v_src = down_func(v_list[0], scale_schedule[-1], scale_schedule[i-1])
+                v_cal = torch.cat([v_src, *v_list[1:i+1]], dim=L_dim) if i > 0 else v_src
+                output = slow_attn(query=q_list[i], key=k_cal, value=v_cal, scale=self.scale, dropout_p=0).transpose(1, 2).reshape(B, -1, C)
+                outputs.append(output)
+            if v_list[-1].shape[L_dim] > 0: # 有多余
+                pad_zeros = torch.zeros_like(v_list[-1], dtype=v.dtype, device=v.device).permute(0, 2, 1, 3)
+                pad_zeros = pad_zeros.reshape(*pad_zeros.shape[:-2], -1)  # [B, H, L', c]
+                outputs.append(pad_zeros)
+            oup = torch.cat(outputs, dim=1)  # [B, L, C]
+        elif self.using_flash:  # Default false
             if attn_bias_or_two_vector is not None: # training
                 kw = dict(VAR_visible_kvlen=attn_bias_or_two_vector[0], VAR_invisible_qlen=attn_bias_or_two_vector[1])
             else:                                   # inference (autoregressive sampling)
@@ -302,12 +373,12 @@ class SelfAttention(nn.Module):
         else:
             # if self.cos_attn: q, k are in fp32; v is in bf16
             # else: q, k, v are in bf16
-            if self.use_flex_attn and attn_fn is not None:
+            if self.use_flex_attn and attn_fn is not None:  # train & high layers
                 oup = attn_fn(q, k, v, scale=self.scale).transpose(1, 2).reshape(B, L, C)
-            else:
+            else:  # inference
                 oup = slow_attn(query=q, key=k, value=v, scale=self.scale, attn_mask=attn_bias_or_two_vector, dropout_p=0).transpose(1, 2).reshape(B, L, C)
             # oup: bf16
-        
+
         return self.proj_drop(self.proj(oup))
     
     def extra_repr(self) -> str:
@@ -433,7 +504,7 @@ class SelfAttnBlock(nn.Module):
         
     # NOTE: attn_bias_or_two_vector is None during inference
     def forward(self, x, cond_BD, ca_kv, attn_bias_or_two_vector):  # todo: minGPT and vqgan also uses pre-norm, just like this, while MaskGiT uses post-norm
-        with torch.cuda.amp.autocast(enabled=False):
+        with torch.amp.autocast('cuda', enabled=False):
             if self.shared_aln: # always True;                   (1, 1, 6, C)  + (B, 1, 6, C)
                 gamma1, gamma2, scale1, scale2, shift1, shift2 = (self.ada_gss + cond_BD).unbind(2) # 116C + B16C =unbind(2)=> 6 B1C
             else:
@@ -489,30 +560,31 @@ class CrossAttnBlock(nn.Module):
             self.ca_gamma = 1
         
         self.checkpointing_sa_only = checkpointing_sa_only
-    
+
+
     # NOTE: attn_bias_or_two_vector is None during inference
-    def forward(self, x, cond_BD, ca_kv, attn_bias_or_two_vector, attn_fn=None, scale_schedule=None, rope2d_freqs_grid=None, scale_ind=0):    # todo: minGPT and vqgan also uses pre-norm, just like this, while MaskGiT uses post-norm
-        with torch.cuda.amp.autocast(enabled=False):    # disable half precision
+    def forward(self, x, cond_BD, ca_kv, attn_bias_or_two_vector, attn_fn=None, scale_schedule=None, rope2d_freqs_grid=None, start_layer=False, scale_ind=0, src=True):    # todo: minGPT and vqgan also uses pre-norm, just like this, while MaskGiT uses post-norm
+        with torch.amp.autocast('cuda', enabled=False):    # disable half precision
             if self.shared_aln: # always True;                   (1, 1, 6, C)  + (B, 1, 6, C)
                 gamma1, gamma2, scale1, scale2, shift1, shift2 = (self.ada_gss + cond_BD).unbind(2) # 116C + B16C =unbind(2)=> 6 B1C
             else:
                 gamma1, gamma2, scale1, scale2, shift1, shift2 = self.ada_lin(cond_BD).view(-1, 1, 6, self.C).unbind(2)
-        
+                
         if self.fused_norm_func is None:
             x_sa = self.ln_wo_grad(x.float()).mul(scale1.add(1)).add_(shift1)
             if self.checkpointing_sa_only and self.training:
-                x_sa = checkpoint(self.sa, x_sa, attn_bias_or_two_vector, attn_fn, scale_schedule, rope2d_freqs_grid, use_reentrant=False)
+                x_sa = checkpoint(self.sa, x_sa, attn_bias_or_two_vector, attn_fn, scale_schedule, rope2d_freqs_grid, use_reentrant=False, start_layer=start_layer, src=src)
             else:
-                x_sa = self.sa(x_sa, attn_bias_or_two_vector, attn_fn, scale_schedule, rope2d_freqs_grid)
+                x_sa = self.sa(x_sa, attn_bias_or_two_vector, attn_fn, scale_schedule, rope2d_freqs_grid, start_layer=start_layer, src=src)
             x = x + self.drop_path(x_sa.mul_(gamma1))
             x = x + self.ca(self.ca_norm(x), ca_kv).float().mul_(self.ca_gamma)
             x = x + self.drop_path(self.ffn( self.ln_wo_grad(x.float()).mul(scale2.add(1)).add_(shift2) ).mul(gamma2)) # this mul(gamma2) cannot be in-placed cuz we possibly use FusedMLP
         else:
             x_sa = self.fused_norm_func(C=self.C, eps=self.norm_eps, x=x, scale=scale1, shift=shift1)
             if self.checkpointing_sa_only and self.training:
-                x_sa = checkpoint(self.sa, x_sa, attn_bias_or_two_vector, attn_fn, scale_schedule, rope2d_freqs_grid, use_reentrant=False)
+                x_sa = checkpoint(self.sa, x_sa, attn_bias_or_two_vector, attn_fn, scale_schedule, rope2d_freqs_grid, use_reentrant=False, start_layer=start_layer, src=src)
             else:
-                x_sa = self.sa(x_sa, attn_bias_or_two_vector, attn_fn, scale_schedule, rope2d_freqs_grid, scale_ind=scale_ind)
+                x_sa = self.sa(x_sa, attn_bias_or_two_vector, attn_fn, scale_schedule, rope2d_freqs_grid, start_layer=start_layer, scale_ind=scale_ind, src=src)
             x = x + self.drop_path(x_sa.mul_(gamma1))
             x = x + self.ca(self.ca_norm(x), ca_kv).float().mul_(self.ca_gamma)
             x = x + self.drop_path(self.ffn(self.fused_norm_func(C=self.C, eps=self.norm_eps, x=x, scale=scale2, shift=shift2)).mul(gamma2)) # this mul(gamma2) cannot be in-placed cuz we possibly use FusedMLP

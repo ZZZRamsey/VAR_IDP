@@ -65,7 +65,8 @@ def build_everything_from_args(args: arg_util.Args, saver):
     )
     
     # auto resume from broken experiment
-    auto_resume_info, start_ep, start_it, acc_str, eval_milestone, trainer_state, args_state = auto_resume(args)
+    if not args.rush_resume:
+        auto_resume_info, start_ep, start_it, acc_str, eval_milestone, trainer_state, args_state = auto_resume(args)
     print(f'global bs={args.glb_batch_size}, local bs={args.batch_size}')
     print(f'initial args:\n{str(args)}')
     args.dump_log()
@@ -509,7 +510,7 @@ def train_one_ep(
                 # [get data]
                 src_inp, tgt_inp, emb_inp, mllm_rec_inp, meta_info_json = data
                 
-                src_inp = src_inp.to(args.device, non_blocking=True)
+                # src_inp = src_inp.to(args.device, non_blocking=True)
                 tgt_inp = tgt_inp.to(args.device, non_blocking=True)
                 emb_inp = emb_inp.to(args.device, non_blocking=True)
                 

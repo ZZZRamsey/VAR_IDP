@@ -104,8 +104,8 @@ def process_faceid_dataset(
         nonlocal tar_file, tar_writer, current_tar_idx, sample_count
         if tar_writer is not None:
             tar_writer.close()
-            tar_info[current_tar_idx] = sample_count
-            print(f"\n已完成 tar 文件: wds_faceid_{current_tar_idx:04d}.tar，包含 {sample_count} 个样本")
+            tar_info[current_tar_idx - 1] = sample_count
+            print(f"\n已完成 tar 文件: wds_faceid_{current_tar_idx - 1:04d}.tar，包含 {sample_count} 个样本")
         
         tar_filename = output_path / f"wds_faceid_{current_tar_idx:04d}.tar"
         tar_writer = tarfile.open(tar_filename, 'w')
@@ -395,8 +395,8 @@ def process_faceid_dataset(
 
 def main():
     # 注意当前路径下如果有qualified_files.txt则只打包其中的文件名
-    BASE_ROOT = '/fs-ift/atlas/zouyuefeng/zls/code/VAR_IDP/data/FaceID-6M/laion_512'
-    OUTPUT_ROOT = '/fs-ift/atlas/zouyuefeng/zls/code/VAR_IDP/data/FaceID-6M/512_webdataset_81390'
+    BASE_ROOT = '/fs-ift/atlas/zouyuefeng/zls/code/VAR_IDP/data/assets'
+    OUTPUT_ROOT = '/fs-ift/atlas/zouyuefeng/zls/code/VAR_IDP/data/assets/webdataset'
     NUM_SAMPLES_PER_TAR = 2 ** 14   # 16384
     SAMPLE_NUM = None  # 设置为 None 则处理所有数据
 

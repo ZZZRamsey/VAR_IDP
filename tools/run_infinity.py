@@ -105,7 +105,7 @@ def gen_one_img(
     text_tokenizer,
     text_encoder,
     prompt, 
-    src_img_3HW,
+    # src_img_3HW,
     cfg_list=[],
     tau_list=[],
     negative_prompt='',
@@ -136,18 +136,18 @@ def gen_one_img(
     else:
         negative_label_B_or_BLT = None
 
-    src_img_3HW = src_img_3HW.unsqueeze(0).to('cuda', non_blocking=True)
-    src_img_features, _, _ = vae.encode_for_raw_features(src_img_3HW, scale_schedule=scale_schedule)
+    # src_img_3HW = src_img_3HW.unsqueeze(0).to('cuda', non_blocking=True)
+    # src_img_features, _, _ = vae.encode_for_raw_features(src_img_3HW, scale_schedule=scale_schedule)
     print(f'cfg: {cfg_list}, tau: {tau_list}')
 
-    src_img_prefix = get_image_prefix(src_img_features, vae, scale_schedule, apply_spatial_patchify)
+    # src_img_prefix = get_image_prefix(src_img_features, vae, scale_schedule, apply_spatial_patchify)
 
     with torch.amp.autocast('cuda', enabled=True, dtype=torch.bfloat16, cache_enabled=True):
         stt = time.time()
         _, pred_gt, img_list = infinity_test.autoregressive_infer_cfg(
             vae=vae,
             scale_schedule=scale_schedule, 
-            src_img_prefix=src_img_prefix,
+            # src_img_prefix=src_img_prefix,
             label_B_or_BLT=text_cond_tuple, g_seed=g_seed,
             B=1, negative_label_B_or_BLT=negative_label_B_or_BLT, force_gt_Bhw=None,
             cfg_sc=cfg_sc, cfg_list=cfg_list, tau_list=tau_list, top_k=top_k, top_p=top_p,
@@ -209,13 +209,14 @@ def load_infinity(
     # bf16=False,
     bf16=True,
     checkpoint_type='torch',
+    shared_aln=True,
 ):
     print(f'[Loading Infinity]')
     text_maxlen = 512
     with torch.amp.autocast('cuda', enabled=True, dtype=torch.bfloat16, cache_enabled=True), torch.no_grad():
         infinity_test: Infinity = Infinity(
             vae_local=vae, text_channels=text_channels, text_maxlen=text_maxlen,
-            shared_aln=True, raw_scale_schedule=scale_schedule,
+            shared_aln=shared_aln, raw_scale_schedule=scale_schedule,
             checkpointing='full-block',
             customized_flash_attn=False,
             fused_norm=True,
@@ -246,6 +247,8 @@ def load_infinity(
         print(f'[Load Infinity weights]')
         if checkpoint_type == 'torch':
             state_dict = torch.load(model_path, map_location='cpu')
+            if 'trainer' in state_dict and 'gpt_wo_ddp' in state_dict['trainer']:
+                state_dict = state_dict['trainer']['gpt_wo_ddp']
             if bf16:
                 state_dict = {k: v.to(torch.bfloat16) if v.dtype.is_floating_point else v for k, v in state_dict.items()}
             print(infinity_test.load_state_dict(state_dict))
@@ -384,6 +387,7 @@ def load_transformer(vae, args):
         use_flex_attn=args.use_flex_attn,
         bf16=args.bf16,
         checkpoint_type=args.checkpoint_type,
+        shared_aln=args.saln,
     )
     return infinity
 
@@ -419,9 +423,9 @@ def add_common_arguments(parser):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     add_common_arguments(parser)
-    parser.add_argument('--prompt', type=str, default='a dog')
-    parser.add_argument('--src_image_path', type=str, default='./source.jpg')
-    parser.add_argument('--tgt_image_path', type=str, default='./target.jpg')
+    parser.add_argument('--prompt', type=str, default='a person riding a horse on the beach')
+    parser.add_argument('--src_image_path', type=str, default='./data/assets/square_face/test.jpg')
+    parser.add_argument('--tgt_image_path', type=str, default='./data/assets/original_img/test.jpg')
     parser.add_argument('--save_file', type=str, default='./tmp.jpg')
     args = parser.parse_args()
 
@@ -437,7 +441,7 @@ if __name__ == '__main__':
     elif args.pn == '1M':
         h, w = 1024, 1024
 
-    from infinity.dataset.dataset_t2i_iterable import transform
+    from infinity.dataset.dataset_wds import transform
     with open(args.src_image_path, 'rb') as f:
         src_img: PImage.Image = PImage.open(f)
         src_img = src_img.convert('RGB')
@@ -465,7 +469,7 @@ if __name__ == '__main__':
                 text_tokenizer,
                 text_encoder,
                 args.prompt,
-                src_img_3HW,
+                # src_img_3HW,
                 g_seed=args.seed,
                 gt_leak=0,
                 gt_ls_Bl=None,

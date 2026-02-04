@@ -47,9 +47,7 @@ def transform(pil_img, tgt_h, tgt_w, file_name="unknown"):
 
         # Center crop to target size
         arr = np.array(pil_img)
-        crop_y = (arr.shape[0] - tgt_h) // 2
-        crop_x = (arr.shape[1] - tgt_w) // 2
-        im = to_tensor(arr[crop_y: crop_y + tgt_h, crop_x: crop_x + tgt_w])
+        im = to_tensor(arr)
     else:
         # pil_img.save(f"{os.path.dirname(__file__)}/debug_src_{file_name}.png")  # For debugging
         # pil_img.save(f"{os.path.dirname(__file__)}/debug_tgt_{file_name}.png")  # For debugging

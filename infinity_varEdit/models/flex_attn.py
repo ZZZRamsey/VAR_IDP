@@ -69,6 +69,25 @@ def _generate_var_infer_mask_with_kv_cache(lengths):
 
     return var_mask_mod
 
+def _generate_var_edit_block_mask_mod(offsets):
+
+    def _offsets_to_doc_ids_tensor(offsets):
+        device = offsets.device
+        counts = offsets[1:] - offsets[:-1]
+        return torch.repeat_interleave(
+            torch.arange(len(counts), device=device, dtype=torch.int32), counts
+        )
+
+    document_id = _offsets_to_doc_ids_tensor(offsets)
+    text_id = (document_id[-1] + 1) // 2
+
+    def var_edit_block_mask_mod(b, h, q_idx, kv_idx):
+        causal_doc = document_id[q_idx] >= document_id[kv_idx]
+        with_edit = (document_id[q_idx] % text_id) >= (document_id[kv_idx] % text_id)
+        return causal_doc & with_edit
+
+    return var_edit_block_mask_mod
+
 class FlexAttn(nn.Module):
     def __init__(
             self, block_scales:list, mask_type:str, B, H, L:int, auto_padding=False
@@ -84,7 +103,7 @@ class FlexAttn(nn.Module):
         if not flex_attention_available:
             raise NotImplementedError((f"[Error] flex attention need pytorch 2.5.0+ but your version is {torch.__version__}"))
 
-        self.support_mask_type = ["var", "causal", "var_infer_mask_with_kv_cache"]
+        self.support_mask_type = ["var", "causal", "var_infer_mask_with_kv_cache", "var_edit_block"]
         self.auto_padding = auto_padding
 
         self.flex_attention = torch.compile(flex_attention)
@@ -106,6 +125,9 @@ class FlexAttn(nn.Module):
             self.block_mask = create_block_mask(self.mask_mod, B = B, H = H, Q_LEN = L, KV_LEN = L, device = 'cuda', _compile = True)
         elif mask_type == 'var_infer_mask_with_kv_cache':
             self.mask_mod = _generate_var_infer_mask_with_kv_cache(self.lengths)
+            self.block_mask = create_block_mask(self.mask_mod, B = B, H = H, Q_LEN = L, KV_LEN = L, device = 'cuda', _compile = True)
+        elif mask_type == 'var_edit_block':
+            self.mask_mod = _generate_var_edit_block_mask_mod(self.offsets)
             self.block_mask = create_block_mask(self.mask_mod, B = B, H = H, Q_LEN = L, KV_LEN = L, device = 'cuda', _compile = True)
         else:
             raise NotImplementedError(f"{mask_type} not supportted in FlexAttn, support type:{self.support_mask_type}")

@@ -173,10 +173,10 @@ class InfinityTrainer(object):
                         vae_scale_schedule = [(pt, 2*ph, 2*pw) for pt, ph, pw in scale_schedule]
                     else:
                         vae_scale_schedule = scale_schedule
-                    source_raw_features, _, _ = self.vae_local.encode_for_raw_features(source_inp_B3HW, scale_schedule=vae_scale_schedule)
+                    # source_raw_features, _, _ = self.vae_local.encode_for_raw_features(source_inp_B3HW, scale_schedule=vae_scale_schedule)
                     target_raw_features, _, _ = self.vae_local.encode_for_raw_features(target_inp_B3HW, scale_schedule=vae_scale_schedule)
             ############ 训练可以直接使用预提取的 face_features,shape=512，如果要使用 src 人脸的多尺度特征才需要量化（推理时一定需要 -> 改推理代码 infinity.py 的 autoregressive_infer_cfg）#############
-            source_x_BLC_wo_prefix, source_gt_ms_idx_Bl = self.bitwise_self_correction.flip_requant(vae_scale_schedule, source_inp_B3HW, source_raw_features, device, src=True)
+            # source_x_BLC_wo_prefix, source_gt_ms_idx_Bl = self.bitwise_self_correction.flip_requant(vae_scale_schedule, source_inp_B3HW, source_raw_features, device, src=True)
             # source_x_BLC_wo_prefix: torch.Size([bs, 1*1+2*2+3*3+...+64*64, d or 4d])
             target_x_BLC_wo_prefix, target_gt_ms_idx_Bl = self.bitwise_self_correction.flip_requant(vae_scale_schedule, target_inp_B3HW, target_raw_features, device)
             # target_x_BLC_wo_prefix: torch.Size([bs, 2*2+3*3+...+64*64, d or 4d])
@@ -192,14 +192,14 @@ class InfinityTrainer(object):
             # truncate scales
             training_scales = args.always_training_scales
             training_seq_len = np.array(scale_schedule)[:training_scales].prod(axis=1).sum()
-            source_x_BLC_wo_prefix = source_x_BLC_wo_prefix[:, :training_seq_len, :]
+            # source_x_BLC_wo_prefix = source_x_BLC_wo_prefix[:, :training_seq_len, :]
             target_x_BLC_wo_prefix = target_x_BLC_wo_prefix[:, :training_seq_len-np.array(scale_schedule[0]).prod(), :]
             self.gpt_wo_ddp.forward  
             
             ############################## forward gpt ########################################
-            logits_BLV = self.gpt(text_cond_tuple, source_x_BLC_wo_prefix, target_x_BLC_wo_prefix, scale_schedule=scale_schedule[:training_scales])
+            # logits_BLV = self.gpt(text_cond_tuple, source_x_BLC_wo_prefix, target_x_BLC_wo_prefix, scale_schedule=scale_schedule[:training_scales])
 
-            # logits_BLV = self.gpt(text_cond_tuple, target_x_BLC_wo_prefix, scale_schedule=scale_schedule[:training_scales]) # [bs, 1*1+...+64*64, vocab_size or log2(vocab_size)*2]
+            logits_BLV = self.gpt(text_cond_tuple, target_x_BLC_wo_prefix, scale_schedule=scale_schedule[:training_scales]) # [bs, 1*1+...+64*64, vocab_size or log2(vocab_size)*2]
 
             self.batch_size, self.seq_len = logits_BLV.shape[:2]
 

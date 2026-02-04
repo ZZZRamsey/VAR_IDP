@@ -29,7 +29,7 @@ class Args(Tap):
     project_name: str = 'Infinity'      # name of wandb project
     tf32: bool = True                   # whether to use TensorFloat32
     auto_resume: bool = True            # whether to automatically resume from the last checkpoint found in args.bed
-    run_id: str = ''                    # wandb run id
+    run_id: str = ''                    # [automatically set; don't specify this] = wandb run id
     rush_resume: str = ''               # pretrained infinity checkpoint
     nowd: int = 1                       # whether to disable weight decay on sparse params (like class token)
     enable_hybrid_shard: bool = False   # whether to use hybrid FSDP
@@ -373,7 +373,8 @@ def init_dist_and_get_args():
         args.tag = 'UK'
     
     # Generate run_id
-    args.run_id = str(int(hashlib.sha256(args.exp_name.encode('utf-8')).hexdigest(), 16) % 10 ** 8)
+    if not args.run_id:
+        args.run_id = str(int(hashlib.sha256(args.exp_name.encode('utf-8')).hexdigest(), 16) % 10 ** 8)
 
     args.chunk_nodes = int(os.environ.get('CK', '') or '0')
     

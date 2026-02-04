@@ -62,13 +62,15 @@ class MultipleLayers(nn.Module):
         for i in range(index, index+num_blocks_in_a_chunk):
             self.module.append(ls[i])
 
-    def forward(self, x, cond_BD, ca_kv, attn_bias_or_two_vector, attn_fn=None, scale_schedule=None, checkpointing_full_block=False, rope2d_freqs_grid=None):
+    ######################### 此处添加start_layer 和 src 参数，用于不同层的不同src尺度注入 #########################
+    def forward(self, x, cond_BD, ca_kv, attn_bias_or_two_vector, attn_fn=None, scale_schedule=None, checkpointing_full_block=False, rope2d_freqs_grid=None, start_layer=False, src=True):
         h = x
         for m in self.module:
             if checkpointing_full_block:
-                h = torch.utils.checkpoint.checkpoint(m, h, cond_BD, ca_kv, attn_bias_or_two_vector, attn_fn, scale_schedule, rope2d_freqs_grid, use_reentrant=False)
+                h = torch.utils.checkpoint.checkpoint(m, h, cond_BD, ca_kv, attn_bias_or_two_vector, attn_fn, scale_schedule, rope2d_freqs_grid, start_layer, src, use_reentrant=False)
             else:
-                h = m(h, cond_BD, ca_kv, attn_bias_or_two_vector, attn_fn, scale_schedule, rope2d_freqs_grid)
+                h = m(h, cond_BD, ca_kv, attn_bias_or_two_vector, attn_fn, scale_schedule, rope2d_freqs_grid, start_layer, src)
+            start_layer = False     # only the first block in chunk may use start_layer=True
         return h
 
 class Infinity(nn.Module):
@@ -105,6 +107,7 @@ class Infinity(nn.Module):
     ):
         # set hyperparameters
         self.C = embed_dim
+        # self.clip_dim = 1536
         self.inference_mode = inference_mode
         self.apply_spatial_patchify = apply_spatial_patchify
         if self.apply_spatial_patchify:
@@ -201,6 +204,7 @@ class Infinity(nn.Module):
                 nn.GELU(approximate='tanh'),
                 nn.Linear(self.D, self.D),
             )
+            # self.clip_proj_for_sos = nn.Linear(self.clip_dim, self.D // 4)
         else:   # class-label cond
             if selecting_idx is None:
                 num_classes = 1000
@@ -301,6 +305,7 @@ class Infinity(nn.Module):
                 auto_padding = True
             else:
                 mask_type = 'var'
+                # mask_type = 'var_edit_block'
                 auto_padding = False
                 apply_flex_attn_scales = [min(self.always_training_scales, len(full_scale_schedule))]
             for scales_num in apply_flex_attn_scales:
@@ -308,9 +313,13 @@ class Infinity(nn.Module):
                 scale_schedule = full_scale_schedule[:scales_num]
                 scale_schedule = [ (min(t, self.video_frames//4+1), h, w) for (t,h, w) in scale_schedule]
                 patchs_nums_tuple = tuple(scale_schedule)
-                SEQ_L = sum( pt * ph * pw for pt, ph, pw in patchs_nums_tuple)
+                ########################## 把最后一个scale加入 ##########################
+                edit_scale_schedule = [scale_schedule[-1]] + scale_schedule
+                edit_patchs_nums_tuple = tuple(edit_scale_schedule)
+
+                SEQ_L = sum( pt * ph * pw for pt, ph, pw in edit_patchs_nums_tuple)
                 aligned_L = SEQ_L+ (self.pad_to_multiplier - SEQ_L % self.pad_to_multiplier) if SEQ_L % self.pad_to_multiplier != 0 else SEQ_L
-                attn_fn = FlexAttn(block_scales = patchs_nums_tuple,
+                attn_fn = FlexAttn(block_scales = edit_patchs_nums_tuple,
                                         mask_type = mask_type,
                                         B = self.batch_size, 
                                         H = self.num_heads,
@@ -321,9 +330,11 @@ class Infinity(nn.Module):
             if self.video_frames > 1: # append image attn_fn when self.video_frames > 1 (namely videos)
                 scale_schedule = [ (1, h, w) for (t,h, w) in scale_schedule]
                 patchs_nums_tuple = tuple(scale_schedule)
-                SEQ_L = sum( pt * ph * pw for pt, ph, pw in patchs_nums_tuple)
+                edit_scale_schedule = [scale_schedule[-1]] + scale_schedule
+                edit_patchs_nums_tuple = tuple(edit_scale_schedule)
+                SEQ_L = sum( pt * ph * pw for pt, ph, pw in edit_patchs_nums_tuple)
                 aligned_L = SEQ_L+ (self.pad_to_multiplier - SEQ_L % self.pad_to_multiplier) if SEQ_L % self.pad_to_multiplier != 0 else SEQ_L
-                attn_fn = FlexAttn(block_scales = patchs_nums_tuple,
+                attn_fn = FlexAttn(block_scales = edit_patchs_nums_tuple,
                                         mask_type = mask_type,
                                         B = self.batch_size, 
                                         H = self.num_heads,
@@ -352,18 +363,26 @@ class Infinity(nn.Module):
     def add_lvl_embeding_for_x_BLC(self, x_BLC, scale_schedule, need_to_pad=0):
         ptr = 0
         x_BLC_list = []
+
+        scale_seq_len = np.array(scale_schedule[-1]).prod()
+        x_BLC_this_scale = x_BLC[:,ptr:ptr+scale_seq_len]
+        ptr += scale_seq_len
+        x_BLC_this_scale = self.add_lvl_embeding(x_BLC_this_scale, len(scale_schedule)-1, scale_schedule)
+        x_BLC_list.append(x_BLC_this_scale)
+        
         for scale_ind, patch_t_h_w in enumerate(scale_schedule):
             scale_seq_len = np.array(patch_t_h_w).prod()
             x_BLC_this_scale = x_BLC[:,ptr:ptr+scale_seq_len] # shape: [bs, patch_h*patch_w, c]
             ptr += scale_seq_len
             x_BLC_this_scale = self.add_lvl_embeding(x_BLC_this_scale, scale_ind, scale_schedule)
             x_BLC_list.append(x_BLC_this_scale)
+
         assert x_BLC.shape[1] == (ptr + need_to_pad), f'{x_BLC.shape[1]} != {ptr} + {need_to_pad}'
         x_BLC_list.append(x_BLC[:,ptr:])
         x_BLC = torch.cat(x_BLC_list, dim=1)
         return x_BLC
 
-    def forward(self, label_B_or_BLT: Union[torch.LongTensor, Tuple[torch.FloatTensor, torch.IntTensor, int]], x_BLC_wo_prefix: torch.Tensor, scale_schedule: List[Tuple[int]],
+    def forward(self, label_B_or_BLT: Union[torch.LongTensor, Tuple[torch.FloatTensor, torch.IntTensor, int]], source_x_BLC_wo_prefix: torch.Tensor, target_x_BLC_wo_prefix: torch.Tensor, scale_schedule: List[Tuple[int]],
         cfg_infer=False,
         **kwargs,
     ) -> Union[torch.Tensor, List[torch.Tensor]]:  # returns logits_BLV
@@ -371,11 +390,8 @@ class Infinity(nn.Module):
         label_B_or_BLT: label_B or (kv_compact, cu_seqlens_k, max_seqlen_k)
         :return: logits BLV, V is vocab_size
         """
-        if cfg_infer:
-            return self.autoregressive_infer_cfg(label_B_or_BLT=label_B_or_BLT, scale_schedule=scale_schedule, **kwargs)
-        
-        x_BLC_wo_prefix = x_BLC_wo_prefix.float()       # input should be float32
-        B = x_BLC_wo_prefix.shape[0]
+        # if cfg_infer:
+        #     return self.autoregressive_infer_cfg(label_B_or_BLT=label_B_or_BLT, clip_features=clip_features, scale_schedule=scale_schedule, **kwargs)
 
         # [1. get input sequence x_BLC]
         with torch.amp.autocast('cuda', enabled=False):
@@ -389,14 +405,21 @@ class Infinity(nn.Module):
             must_on_graph = self.cfg_uncond[0, 0] * 0
             kv_compact = self.text_norm(kv_compact).contiguous()
             sos = cond_BD = self.text_proj_for_sos((kv_compact, cu_seqlens_k, max_seqlen_k)).float().contiguous()    # cond_BD should be float32
+            # sos_clip = self.clip_proj_for_sos(clip_features).float().contiguous()
+            # sos = cond_BD = torch.cat((sos_text, sos_clip), dim=-1)
             kv_compact = self.text_proj_for_ca(kv_compact).contiguous()
-            kv_compact[0, 0] += must_on_graph
+            kv_compact[0, 0] += must_on_graph  #ADD
             ca_kv = kv_compact, cu_seqlens_k, max_seqlen_k
             
             cond_BD_or_gss = self.shared_ada_lin(cond_BD).contiguous()  # gss: gamma, scale, shift; cond_BD_or_gss should be float32
             
+            B = source_x_BLC_wo_prefix.shape[0]
             sos = sos.unsqueeze(1).expand(B, 1, -1) + self.pos_start.expand(B, 1, -1)
-            x_BLC = torch.cat((sos, self.word_embed(self.norm0_ve(x_BLC_wo_prefix))), dim=1)
+
+            # concat the input: sr1, t, sr2, tf1, sr3, tf2, ...
+            src = self.word_embed(self.norm0_ve(source_x_BLC_wo_prefix))
+            tgt = self.word_embed(self.norm0_ve(target_x_BLC_wo_prefix))
+            x_BLC = torch.cat((src, sos, tgt), dim=1)
 
             # [1.1. pad the seqlen dim]
             l_end = x_BLC.shape[1]
@@ -413,7 +436,8 @@ class Infinity(nn.Module):
                 assert x_BLC.shape[-1] % 128 == 0, 'x_BLC.shape[-1] % 128 != 0'
                 attn_bias_or_two_vector = None
             else:
-                d: torch.Tensor = torch.cat([torch.full((pn[0]*pn[1]*pn[2],), i) for i, pn in enumerate(scale_schedule)]).view(1, l_end, 1)
+                edit_scale_schedule = [scale_schedule[-1]] + scale_schedule
+                d: torch.Tensor = torch.cat([torch.full((pn[0]*pn[1]*pn[2],), i) for i, pn in enumerate(edit_scale_schedule)]).view(1, l_end, 1)
                 dT = d.transpose(1, 2)    # dT: 11L
                 attn_bias_for_masking = torch.where(d >= dT, 0., -torch.inf).reshape(1, 1, l_end, l_end)
                 attn_bias = attn_bias_for_masking[:, :, :l_end, :l_end].contiguous()   # attn_bias: 11LL
@@ -437,27 +461,36 @@ class Infinity(nn.Module):
                     x_BLC = self.add_lvl_embeding_for_x_BLC(x_BLC, scale_schedule, need_to_pad)
                 if not self.add_lvl_embeding_only_first_block:
                     x_BLC = self.add_lvl_embeding_for_x_BLC(x_BLC, scale_schedule, need_to_pad)
+                start_layer = True if i == 0 else False
                 if checkpointing_full_block:
-                    x_BLC = torch.utils.checkpoint.checkpoint(b, x_BLC, cond_BD_or_gss, ca_kv, attn_bias_or_two_vector, attn_fn, scale_schedule, self.rope2d_freqs_grid, use_reentrant=False)
+                    x_BLC = torch.utils.checkpoint.checkpoint(b, x_BLC, cond_BD_or_gss, ca_kv, attn_bias_or_two_vector, new_attn_fn, scale_schedule, self.rope2d_freqs_grid, start_layer, use_reentrant=False)
                 else:
-                    x_BLC = b(x=x_BLC, cond_BD=cond_BD_or_gss, ca_kv=ca_kv, attn_bias_or_two_vector=attn_bias_or_two_vector, attn_fn=attn_fn, scale_schedule=scale_schedule, rope2d_freqs_grid=self.rope2d_freqs_grid)
+                    x_BLC = b(x=x_BLC, cond_BD=cond_BD_or_gss, ca_kv=ca_kv, attn_bias_or_two_vector=attn_bias_or_two_vector, attn_fn=attn_fn, scale_schedule=scale_schedule, rope2d_freqs_grid=self.rope2d_freqs_grid, start_layer=start_layer)
         else:
             for i, chunk in enumerate(self.block_chunks): # this path
                 if self.add_lvl_embeding_only_first_block and i == 0:
                     x_BLC = self.add_lvl_embeding_for_x_BLC(x_BLC, scale_schedule, need_to_pad)
                 if not self.add_lvl_embeding_only_first_block:
                     x_BLC = self.add_lvl_embeding_for_x_BLC(x_BLC, scale_schedule, need_to_pad)
-                x_BLC = chunk(x=x_BLC, cond_BD=cond_BD_or_gss, ca_kv=ca_kv, attn_bias_or_two_vector=attn_bias_or_two_vector, attn_fn=attn_fn, scale_schedule=scale_schedule, checkpointing_full_block=checkpointing_full_block, rope2d_freqs_grid=self.rope2d_freqs_grid)
+                start_layer = True if i == 0 else False
+                x_BLC = chunk(x=x_BLC, cond_BD=cond_BD_or_gss, ca_kv=ca_kv, attn_bias_or_two_vector=attn_bias_or_two_vector, attn_fn=attn_fn, scale_schedule=scale_schedule, checkpointing_full_block=checkpointing_full_block, rope2d_freqs_grid=self.rope2d_freqs_grid, start_layer=start_layer)
 
         # [3. unpad the seqlen dim, and then get logits]
-        return self.get_logits(x_BLC[:, :l_end], cond_BD)    # return logits BLV, V is vocab_size
+        output = []
+        length = 0
+        for i, (_, h, w) in enumerate(scale_schedule):
+            length += h*w
+        start = np.array(scale_schedule[-1]).prod()
+        output = x_BLC[:, start:start+length]
+
+        return self.get_logits(output, cond_BD)    # return logits BLV, V is vocab_size
 
     @torch.no_grad()
     def autoregressive_infer_cfg(
         self,
         vae=None,
-        scale_schedule=None,
-        label_B_or_BLT=None,
+        scale_schedule=None, src_img_prefix=None,
+        label_B_or_BLT=None, clip_features=None,
         B=1, negative_label_B_or_BLT=None, force_gt_Bhw=None,
         g_seed=None, cfg_list=[], tau_list=[], cfg_sc=3, top_k=0, top_p=0.0,
         returns_vemb=0, ratio_Bl1=None, gumbel=0, norm_cfg=False,
@@ -480,7 +513,9 @@ class Infinity(nn.Module):
             vae_scale_schedule = [(pt, 2*ph, 2*pw) for pt, ph, pw in scale_schedule]
         else:
             vae_scale_schedule = scale_schedule
-        
+
+        src_BLC_emb = self.word_embed(self.norm0_ve(src_img_prefix))
+
         kv_compact, lens, cu_seqlens_k, max_seqlen_k = label_B_or_BLT
         if any(np.array(cfg_list) != 1):
             bs = 2*B
@@ -533,7 +568,24 @@ class Infinity(nn.Module):
             else:
                 raise ValueError(f'cfg_insertion_layer: {item} is not valid')
         
+        start = 0
         num_stages_minus_1 = len(scale_schedule)-1
+        length = np.array(scale_schedule[-1]).prod()
+        src_last_stage = src_BLC_emb
+        start += length
+        attn_fn = None
+        if self.use_flex_attn:
+            attn_fn = self.attn_fn_compile_dict.get(tuple(scale_schedule), None)
+        for block_idx, b in enumerate(self.block_chunks):
+            if self.add_lvl_embeding_only_first_block and block_idx == 0:
+                src_last_stage = self.add_lvl_embeding(src_last_stage, num_stages_minus_1, scale_schedule)
+            if not self.add_lvl_embeding_only_first_block:
+                src_last_stage = self.add_lvl_embeding(src_last_stage, num_stages_minus_1, scale_schedule)
+            start_layer = True if block_idx == 0 else False
+            for m in b.module:  # 将参考图的 Embedding (src_last_stage) 完整地通过了一遍所有的 Transformer 层。
+                src_last_stage = m(x=src_last_stage, cond_BD=cond_BD_or_gss, ca_kv=ca_kv, attn_bias_or_two_vector=None, attn_fn=attn_fn, scale_schedule=scale_schedule, rope2d_freqs_grid=self.rope2d_freqs_grid, start_layer=start_layer, scale_ind=num_stages_minus_1)
+                start_layer = False
+        
         summed_codes = 0
         for si, pn in enumerate(scale_schedule):   # si: i-th segment
             cfg = cfg_list[si]
@@ -557,9 +609,10 @@ class Infinity(nn.Module):
                     last_stage = self.add_lvl_embeding(last_stage, si, scale_schedule, need_to_pad=need_to_pad)
                 if not self.add_lvl_embeding_only_first_block: 
                     last_stage = self.add_lvl_embeding(last_stage, si, scale_schedule, need_to_pad=need_to_pad)
-                
+                start_layer = True if block_idx == 0 else False
                 for m in b.module:
-                    last_stage = m(x=last_stage, cond_BD=cond_BD_or_gss, ca_kv=ca_kv, attn_bias_or_two_vector=None, attn_fn=attn_fn, scale_schedule=scale_schedule, rope2d_freqs_grid=self.rope2d_freqs_grid, scale_ind=si)
+                    last_stage = m(x=last_stage, cond_BD=cond_BD_or_gss, ca_kv=ca_kv, attn_bias_or_two_vector=None, attn_fn=attn_fn, scale_schedule=scale_schedule, rope2d_freqs_grid=self.rope2d_freqs_grid, start_layer=start_layer, scale_ind=si, src=False)
+                    start_layer = False
                     if (cfg != 1) and (layer_idx in abs_cfg_insertion_layers):
                         # print(f'add cfg={cfg} on {layer_idx}-th layer output')
                         last_stage = cfg * last_stage[:B] + (1-cfg) * last_stage[B:]
@@ -630,7 +683,7 @@ class Infinity(nn.Module):
                     (module.sa if isinstance(module, CrossAttnBlock) else module.attn).kv_caching(False)
 
         if not ret_img:
-            return ret, idx_Bl_list, []
+            return ret, idx_Bld_list, []
         
         if vae_type != 0:
             img = vae.decode(summed_codes.squeeze(-3))
@@ -639,7 +692,7 @@ class Infinity(nn.Module):
 
         img = (img + 1) / 2
         img = img.permute(0, 2, 3, 1).mul_(255).to(torch.uint8).flip(dims=(3,))
-        return ret, idx_Bl_list, img
+        return ret, idx_Bld_list, img
     
     @for_visualize
     def vis_key_params(self, ep):
@@ -769,6 +822,9 @@ TIMM_KEYS = {'img_size', 'pretrained', 'pretrained_cfg', 'pretrained_cfg_overlay
 
 @register_model
 def infinity_2b(depth=32, embed_dim=2048, num_heads=2048//128, drop_path_rate=0.1, **kwargs): return Infinity(depth=depth, embed_dim=embed_dim, num_heads=num_heads, mlp_ratio=4, drop_path_rate=drop_path_rate, **{k: v for k, v in kwargs.items() if k not in TIMM_KEYS})
+
+@register_model
+def infinity_8b(depth=40, embed_dim=3584, num_heads=28, drop_path_rate=0.1, **kwargs): return Infinity(depth=depth, embed_dim=embed_dim, num_heads=num_heads, mlp_ratio=4, drop_path_rate=drop_path_rate, **{k: v for k, v in kwargs.items() if k not in TIMM_KEYS})
 
 @register_model
 def infinity_20b(depth=58, embed_dim=4608, num_heads=4608//128, drop_path_rate=0.25, **kwargs): return Infinity(depth=depth, embed_dim=embed_dim, num_heads=num_heads, mlp_ratio=4, drop_path_rate=drop_path_rate, **{k: v for k, v in kwargs.items() if k not in TIMM_KEYS})
