@@ -21,7 +21,6 @@ import pandas as pd
 from transformers import AutoTokenizer, T5EncoderModel, T5TokenizerFast
 from PIL import Image, ImageEnhance
 import torch.nn.functional as F
-from torch.cuda.amp import autocast
 
 from infinity.models.infinity import Infinity
 from infinity.models.basic import *
@@ -247,10 +246,16 @@ def load_infinity(
         print(f'[Load Infinity weights]')
         if checkpoint_type == 'torch':
             state_dict = torch.load(model_path, map_location='cpu')
-            if 'trainer' in state_dict and 'gpt_wo_ddp' in state_dict['trainer']:
-                state_dict = state_dict['trainer']['gpt_wo_ddp']
+            # Handle different checkpoint formats
+            if 'trainer' in state_dict:
+                if 'gpt_wo_ddp' in state_dict['trainer']:
+                    state_dict = state_dict['trainer']['gpt_wo_ddp']
+                elif 'gpt_fsdp' in state_dict['trainer']:
+                    state_dict = state_dict['trainer']['gpt_fsdp']
+                else:
+                    print(f"Warning: Found 'trainer' key but no 'gpt_wo_ddp' or 'gpt_fsdp'. Available keys: {state_dict['trainer'].keys()}")
             if bf16:
-                state_dict = {k: v.to(torch.bfloat16) if v.dtype.is_floating_point else v for k, v in state_dict.items()}
+                state_dict = {k: v.to(torch.bfloat16) if torch.is_tensor(v) and v.dtype.is_floating_point else v for k, v in state_dict.items()}
             print(infinity_test.load_state_dict(state_dict))
         elif checkpoint_type == 'torch_shard':
             from transformers.modeling_utils import load_sharded_checkpoint
@@ -387,7 +392,7 @@ def load_transformer(vae, args):
         use_flex_attn=args.use_flex_attn,
         bf16=args.bf16,
         checkpoint_type=args.checkpoint_type,
-        shared_aln=args.saln,
+        # shared_aln=args.saln,
     )
     return infinity
 
@@ -441,11 +446,11 @@ if __name__ == '__main__':
     elif args.pn == '1M':
         h, w = 1024, 1024
 
-    from infinity.dataset.dataset_wds import transform
-    with open(args.src_image_path, 'rb') as f:
-        src_img: PImage.Image = PImage.open(f)
-        src_img = src_img.convert('RGB')
-        src_img_3HW = transform(src_img, h, w)
+    # from infinity.dataset.dataset_wds import transform
+    # with open(args.src_image_path, 'rb') as f:
+    #     src_img: PImage.Image = PImage.open(f)
+    #     src_img = src_img.convert('RGB')
+    #     src_img_3HW = transform(src_img, h, w)
 
     # src_img = (src_img_3HW + 1) / 2
     # src_img = src_img.permute(1, 2, 0).mul_(255).to(torch.uint8).flip(dims=(2,))
@@ -461,7 +466,7 @@ if __name__ == '__main__':
     scale_schedule = dynamic_resolution_h_w[args.h_div_w_template][args.pn]['scales']
     scale_schedule = [ (1, h, w) for (_, h, w) in scale_schedule]
 
-    with autocast(dtype=torch.bfloat16):
+    with torch.amp.autocast('cuda', dtype=torch.bfloat16):
         with torch.no_grad():
             generated_image = gen_one_img(
                 infinity,

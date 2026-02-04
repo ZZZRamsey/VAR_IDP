@@ -3,27 +3,17 @@
 set -x
 
 # set dist args
-SINGLE=1
-nproc_per_node=${ARNOLD_WORKER_GPU}
+# For multi-node training, set NODE_RANK differently on each machine:
+# Machine 1 (172.16.46.140): export NODE_RANK=0
+# Machine 2 (172.16.46.142): export NODE_RANK=1
+NODE_RANK=${NODE_RANK:-0}  # Default to 0 if not set
 
-if [ ! -z "$SINGLE" ] && [ "$SINGLE" != "0" ]; then
-  echo "[single node alone] SINGLE=$SINGLE"
-  nnodes=1
-  node_rank=0
-  nproc_per_node=2
-  master_addr=127.0.0.1
-  master_port=12345
-else
-  MASTER_NODE_ID=0
-  nnodes=${ARNOLD_WORKER_NUM}
-  node_rank=${ARNOLD_ID}
-  master_addr="METIS_WORKER_${MASTER_NODE_ID}_HOST"
-  master_addr=${!master_addr}
-  master_port="METIS_WORKER_${MASTER_NODE_ID}_PORT"
-  master_port=${!master_port}
-  ports=(`echo $master_port | tr ',' ' '`)
-  master_port=${ports[0]}
-fi
+# Multi-node configuration
+nnodes=2  # Total number of machines
+nproc_per_node=1  # Number of GPUs per machine
+master_addr=172.16.46.140  # IP of the master node (first machine)
+master_port=12345  # Communication port
+node_rank=${NODE_RANK}  # This machine's rank (0 or 1)
 
 echo "[nproc_per_node: ${nproc_per_node}]"
 echo "[nnodes: ${nnodes}]"
@@ -36,6 +26,8 @@ export OMP_NUM_THREADS=8
 export NCCL_IB_DISABLE=0
 export NCCL_IB_GID_INDEX=3
 export NCCL_SOCKET_IFNAME=eno1np0
+export NCCL_SOCKET_NTHREADS=4
+export NCCL_NSOCKS_PERTHREAD=4
 
 
 BED=checkpoints
@@ -51,9 +43,9 @@ export CUDA_TIMER_STREAM_KAFKA_TOPIC=megatron_cuda_timer_tracing_original_v2
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 
 # wandb offline
-exp_name=125M-0.06M-10-overfit-300ep
+exp_name=125M-0.06M-10-overfit-1000ep-multi-node
 bed_path=checkpoints/${exp_name}/
-data_path='/data1/zls/code/AR/VAR_IDP/data/FaceID-6M/512_webdataset_10'
+data_path='data/FaceID-6M/512_webdataset_10'
 video_data_path=''
 local_out_path=$LOCAL_OUT/${exp_name}
 

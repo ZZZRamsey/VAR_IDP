@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # set arguments for inference
-pn=1M
-model_type=infinity_2b
+pn=0.25M
+model_type=infinity_layer12
 use_scale_schedule_embedding=0
 use_bit_label=1
 checkpoint_type='torch'
-infinity_model_path=weights/infinity_2b_reg.pth
+infinity_model_path=local_output/125M-0.06M-10-overfit-300ep/run_52253513/0.25M-1K-ep999-iter1.pth
 vae_type=32
 vae_path=weights/infinity_vae_d32_reg.pth
 cfg=4
@@ -19,7 +19,7 @@ text_channels=2048
 apply_spatial_patchify=0
 
 # run inference
-python3 tools/run_infinity.py \
+python tools/run_infinity.py \
 --cfg ${cfg} \
 --tau ${tau} \
 --pn ${pn} \
@@ -38,6 +38,6 @@ python3 tools/run_infinity.py \
 --text_encoder_ckpt ${text_encoder_ckpt} \
 --text_channels ${text_channels} \
 --apply_spatial_patchify ${apply_spatial_patchify} \
---prompt "a beautifual Chinese woman in her late 30s, wearing a suit and tie, looking at the camera" \
+--prompt "A photorealistic action shot of a male soccer player in a light blue jersey and matching shorts, holding a white soccer ball with a blue and orange design." \
 --seed 1 \
 --save_file tmp.jpg
